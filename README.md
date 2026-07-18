@@ -26,9 +26,27 @@ The follow-on compatibility proofs also passed:
 - [Proof 1: tool loading and invocation](docs/proof-1-tool-loading.md)
 - [Proof 3: Lobster approval recovery](docs/proof-3-lobster-approval.md)
 
-The repository is now ready for a narrow Guardian vertical slice. It is still a
-prototype: the metric tool consumes a supplied snapshot and the Lobster
-workflow performs only synthetic local steps.
+The compatibility risks are retired and the first narrow slice below is now
+implemented. It remains a prototype: the metric tool consumes a supplied
+snapshot and the Lobster workflow performs only synthetic local steps.
+
+## First vertical slice
+
+The first end-to-end slice is now implemented and verified:
+
+```text
+metric alert -> evidence -> proposal -> approval -> remediation -> recovery
+```
+
+Both approve (`completed`) and deny (`blocked`) paths persist through the native
+session extension. The approval token also survives a Gateway restart. See
+[the vertical slice report](docs/vertical-slice.md).
+
+Run the isolated approved-path proof with:
+
+```bash
+npm run slice:proof
+```
 
 ## Version contract
 

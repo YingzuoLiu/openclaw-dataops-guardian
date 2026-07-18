@@ -4,11 +4,15 @@
   "description": "Persists incident workflow state and enforces DataOps investigation policy.",
   "contracts": {
     "tools": [
-      "guardian_inspect_metric_snapshot"
+      "guardian_inspect_metric_snapshot",
+      "guardian_propose_remediation"
     ]
   },
   "toolMetadata": {
     "guardian_inspect_metric_snapshot": {
+      "optional": false
+    },
+    "guardian_propose_remediation": {
       "optional": false
     }
   },

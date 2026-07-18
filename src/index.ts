@@ -8,6 +8,7 @@ import {
   projectIncidentState,
 } from "./state/incident-state.js";
 import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot.js";
+import { createProposeRemediationTool } from "./tools/propose-remediation.js";
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "dataops-guardian",
@@ -15,12 +16,21 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   description: "Persists incident workflow state for DataOps investigations.",
   register(api) {
     api.registerTool(createInspectMetricSnapshotTool());
+    api.registerTool(createProposeRemediationTool());
     api.registerToolMetadata({
       toolName: "guardian_inspect_metric_snapshot",
       displayName: "Inspect Metric Snapshot",
       description: "Classify one metric snapshot against its expected baseline.",
       risk: "low",
       tags: ["dataops", "investigation", "read-only"],
+    });
+    api.registerToolMetadata({
+      toolName: "guardian_propose_remediation",
+      displayName: "Propose Remediation",
+      description:
+        "Create a deterministic remediation proposal without executing it.",
+      risk: "low",
+      tags: ["dataops", "proposal", "read-only"],
     });
 
     api.session.state.registerSessionExtension({

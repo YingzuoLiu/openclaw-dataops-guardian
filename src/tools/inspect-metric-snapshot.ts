@@ -8,6 +8,7 @@ export type MetricSnapshotResult = {
   baselineValue: number;
   relativeChange: number | null;
   classification: "within_expected_range" | "warning" | "critical";
+  evidenceSummary: string;
 };
 
 export function inspectMetricSnapshot(params: {
@@ -37,6 +38,10 @@ export function inspectMetricSnapshot(params: {
     baselineValue: params.baselineValue,
     relativeChange,
     classification,
+    evidenceSummary:
+      relativeChange === null
+        ? `${params.metric} baseline is zero; observed value is ${params.currentValue}.`
+        : `${params.metric} changed ${(relativeChange * 100).toFixed(1)}% from baseline (${params.baselineValue} -> ${params.currentValue}); classified as ${classification}.`,
   };
 }
 
