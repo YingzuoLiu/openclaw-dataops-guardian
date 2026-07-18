@@ -45,10 +45,13 @@ session extension. The approval token also survives a Gateway restart. See
 
 The incident state is now schema version 2. A proposal can enter `approval`
 only after fresh Prometheus evidence passes the Reducer policy. The plugin also
-registers `before_tool_call`, `after_tool_call`, and `before_agent_finalize`
-hooks so an Agent cannot propose remediation before the required evidence Tools
-have succeeded, and an unsupported natural answer receives one bounded revision
-pass. See [the evidence gate contract](docs/evidence-gates.md).
+registers `before_agent_run`, `before_tool_call`, `after_tool_call`, and
+`before_agent_finalize` hooks. In an explicitly configured dedicated Guardian
+profile, the generic `require_tools` validator is active before the model's
+first turn, so both partial Tool use and zero-Tool final answers are covered.
+Unsupported natural answers receive one bounded revision pass, while the Tool
+and Reducer gates continue to prevent unsupported proposals and approval. See
+[the evidence gate contract](docs/evidence-gates.md).
 
 The Prometheus endpoint is administrator configuration, not a Tool argument.
 The Agent supplies only PromQL, and Guardian requires the query to return

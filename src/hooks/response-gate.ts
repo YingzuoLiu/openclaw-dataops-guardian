@@ -1,14 +1,27 @@
+import {
+  evaluateRequireTools,
+  normalizeRequireToolsConfig,
+  readToolCallLedger,
+  recordToolCall,
+  type RequireToolsValidatorConfig,
+  type ToolCallLedger,
+} from "../validators/require-tools.js";
+
 export const GUARDIAN_RUN_CONTEXT_NAMESPACE = "evidence-tools";
-export const REQUIRED_AGENT_EVIDENCE_TOOLS = [
-  "guardian_query_prometheus",
-  "guardian_inspect_metric_snapshot",
-] as const;
+export const GUARDIAN_REQUIRE_TOOLS = {
+  type: "require_tools",
+  tools: [
+    "guardian_query_prometheus",
+    "guardian_inspect_metric_snapshot",
+  ],
+  maxAttempts: 1,
+} satisfies RequireToolsValidatorConfig;
 
 const GUARDIAN_TOOL_PREFIX = "guardian_";
 
 export type GuardianRunEvidence = {
   active: true;
-  successfulTools: string[];
+  ledger: ToolCallLedger;
 };
 
 export type ResponseGateDecision = {
@@ -26,19 +39,40 @@ export type ProposalToolGateDecision = {
   blockReason: string;
 };
 
+export type GuardianGateAuditEvent = {
+  schemaVersion: 1;
+  component: "dataops-guardian";
+  event: "require_tools";
+  hook: "before_agent_run" | "before_tool_call" | "before_agent_finalize";
+  runId: string;
+  decision: "activate" | "allow" | "block" | "revise";
+  requiredTools: string[];
+  missingTools: string[];
+  attemptedButFailedTools: string[];
+  recordedAt: string;
+};
+
 function readRecord(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
 }
 
-function readSuccessfulTools(value: unknown): string[] {
-  const state = readRecord(value);
-  return Array.isArray(state?.successfulTools)
-    ? state.successfulTools.filter(
-        (entry): entry is string => typeof entry === "string",
-      )
-    : [];
+function readLedger(value: unknown): ToolCallLedger {
+  return readToolCallLedger(readRecord(value)?.ledger);
+}
+
+export function shouldEnforceGuardianRequireTools(rawConfig: unknown): boolean {
+  return readRecord(rawConfig)?.enforceRequireToolsOnAgentRuns === true;
+}
+
+export function activateGuardianRunEvidence(
+  current: unknown,
+): GuardianRunEvidence {
+  return {
+    active: true,
+    ledger: readLedger(current),
+  };
 }
 
 export function recordGuardianToolObservation(
@@ -49,32 +83,51 @@ export function recordGuardianToolObservation(
     return undefined;
   }
 
-  const successfulTools = new Set(readSuccessfulTools(current));
-  if (params.succeeded) {
-    successfulTools.add(params.toolName);
-  }
-
   return {
     active: true,
-    successfulTools: [...successfulTools].sort(),
+    ledger: recordToolCall(readLedger(current), params),
   };
 }
 
 export function evaluateAgentEvidenceTools(state: unknown): {
   active: boolean;
   missingTools: string[];
+  attemptedButFailedTools: string[];
 } {
   const record = readRecord(state);
   if (record?.active !== true) {
-    return { active: false, missingTools: [] };
+    return { active: false, missingTools: [], attemptedButFailedTools: [] };
   }
 
-  const successfulTools = new Set(readSuccessfulTools(state));
+  const validation = evaluateRequireTools(GUARDIAN_REQUIRE_TOOLS, readLedger(state));
   return {
     active: true,
-    missingTools: REQUIRED_AGENT_EVIDENCE_TOOLS.filter(
-      (toolName) => !successfulTools.has(toolName),
-    ),
+    missingTools: validation.missingTools,
+    attemptedButFailedTools: validation.attemptedButFailedTools,
+  };
+}
+
+export function buildGuardianGateAuditEvent(params: {
+  state: unknown;
+  hook: GuardianGateAuditEvent["hook"];
+  runId: string;
+  decision: GuardianGateAuditEvent["decision"];
+  recordedAt?: string;
+}): GuardianGateAuditEvent {
+  const evaluation = evaluateAgentEvidenceTools(params.state);
+  return {
+    schemaVersion: 1,
+    component: "dataops-guardian",
+    event: "require_tools",
+    hook: params.hook,
+    runId: params.runId,
+    decision: params.decision,
+    requiredTools: [...GUARDIAN_REQUIRE_TOOLS.tools],
+    missingTools: evaluation.active
+      ? evaluation.missingTools
+      : [...GUARDIAN_REQUIRE_TOOLS.tools],
+    attemptedButFailedTools: evaluation.attemptedButFailedTools,
+    recordedAt: params.recordedAt ?? new Date().toISOString(),
   };
 }
 
@@ -97,7 +150,7 @@ export function buildResponseGateDecision(
     retry: {
       instruction,
       idempotencyKey: `dataops-guardian:require-tools:${evaluation.missingTools.join("+")}`,
-      maxAttempts: 1,
+      maxAttempts: normalizeRequireToolsConfig(GUARDIAN_REQUIRE_TOOLS).maxAttempts,
     },
   };
 }
@@ -108,7 +161,7 @@ export function buildProposalToolGateDecision(
   const evaluation = evaluateAgentEvidenceTools(state);
   const missingTools = evaluation.active
     ? evaluation.missingTools
-    : [...REQUIRED_AGENT_EVIDENCE_TOOLS];
+    : [...GUARDIAN_REQUIRE_TOOLS.tools];
   if (missingTools.length === 0) {
     return undefined;
   }

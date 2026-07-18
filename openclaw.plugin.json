@@ -36,6 +36,11 @@
         "minimum": 200,
         "maximum": 30000,
         "default": 5000
+      },
+      "enforceRequireToolsOnAgentRuns": {
+        "type": "boolean",
+        "default": false,
+        "description": "Activate Guardian require_tools validation at the start of every Agent run in this dedicated profile."
       }
     }
   }

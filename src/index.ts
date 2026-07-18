@@ -9,10 +9,13 @@ import {
 } from "./state/incident-state.js";
 import { evaluateIncidentEvidence } from "./policy/evidence-policy.js";
 import {
+  activateGuardianRunEvidence,
+  buildGuardianGateAuditEvent,
   buildProposalToolGateDecision,
   buildResponseGateDecision,
   GUARDIAN_RUN_CONTEXT_NAMESPACE,
   recordGuardianToolObservation,
+  shouldEnforceGuardianRequireTools,
 } from "./hooks/response-gate.js";
 import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot.js";
 import { createProposeRemediationTool } from "./tools/propose-remediation.js";
@@ -23,6 +26,12 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   name: "DataOps Guardian",
   description: "Persists incident workflow state for DataOps investigations.",
   register(api) {
+    const logGateAudit = (
+      event: ReturnType<typeof buildGuardianGateAuditEvent>,
+    ): void => {
+      api.logger.info(JSON.stringify(event));
+    };
+
     api.registerTool(createInspectMetricSnapshotTool());
     api.registerTool(createProposeRemediationTool());
     api.registerTool(createQueryPrometheusTool(api.pluginConfig));
@@ -49,6 +58,51 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
       risk: "low",
       tags: ["dataops", "proposal", "read-only"],
     });
+
+    api.on(
+      "before_agent_run",
+      (_event, ctx) => {
+        if (!shouldEnforceGuardianRequireTools(api.pluginConfig)) {
+          return;
+        }
+        if (!ctx.runId) {
+          return {
+            outcome: "block" as const,
+            reason: "Guardian require_tools could not identify the active run",
+            message: "Guardian validation could not initialize this run.",
+            category: "guardian_validator_state",
+          };
+        }
+
+        const current = api.runContext.getRunContext({
+          runId: ctx.runId,
+          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+        });
+        const next = activateGuardianRunEvidence(current);
+        const stored = api.runContext.setRunContext({
+          runId: ctx.runId,
+          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+          value: next,
+        });
+        if (!stored) {
+          return {
+            outcome: "block" as const,
+            reason: "Guardian require_tools run context was rejected",
+            message: "Guardian validation could not initialize this run.",
+            category: "guardian_validator_state",
+          };
+        }
+        logGateAudit(
+          buildGuardianGateAuditEvent({
+            state: next,
+            hook: "before_agent_run",
+            runId: ctx.runId,
+            decision: "activate",
+          }),
+        );
+      },
+      { priority: 100, timeoutMs: 1_000 },
+    );
 
     api.on(
       "before_tool_call",
@@ -78,6 +132,14 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         }
         const runDecision = buildProposalToolGateDecision(runEvidence);
         if (runId && runDecision) {
+          logGateAudit(
+            buildGuardianGateAuditEvent({
+              state: runEvidence,
+              hook: "before_tool_call",
+              runId,
+              decision: "block",
+            }),
+          );
           return runDecision;
         }
 
@@ -131,12 +193,28 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         if (!runId) {
           return;
         }
-        return buildResponseGateDecision(
-          api.runContext.getRunContext({
-            runId,
-            namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-          }),
-        );
+        let runEvidence = api.runContext.getRunContext({
+          runId,
+          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+        });
+        if (
+          runEvidence === undefined &&
+          shouldEnforceGuardianRequireTools(api.pluginConfig)
+        ) {
+          runEvidence = activateGuardianRunEvidence(undefined);
+        }
+        const decision = buildResponseGateDecision(runEvidence);
+        if (runEvidence !== undefined) {
+          logGateAudit(
+            buildGuardianGateAuditEvent({
+              state: runEvidence,
+              hook: "before_agent_finalize",
+              runId,
+              decision: decision ? "revise" : "allow",
+            }),
+          );
+        }
+        return decision;
       },
       { priority: 100, timeoutMs: 1_000 },
     );

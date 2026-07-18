@@ -7,6 +7,8 @@ npm run build
 ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
 ./node_modules/.bin/openclaw config set \
   plugins.entries.dataops-guardian.hooks.allowConversationAccess true >/dev/null
+./node_modules/.bin/openclaw config set \
+  plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns true >/dev/null
 ./node_modules/.bin/openclaw plugins inspect \
   dataops-guardian --runtime --json >"$OPENCLAW_STATE_DIR/policy-inspect.json"
 
@@ -17,6 +19,7 @@ const inspection = JSON.parse(await readFile(process.argv[2], "utf8"));
 const expected = new Set([
   "before_tool_call",
   "after_tool_call",
+  "before_agent_run",
   "before_agent_finalize",
 ]);
 const actual = new Set(

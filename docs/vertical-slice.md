@@ -63,6 +63,8 @@ approval as `cancelled`, while Guardian records the business state as `blocked`.
   extension projection.
 - The evidence Reducer owns the durable approval invariant: fresh evidence from
   a required source must pass before `validation -> approval` is legal.
+- `before_agent_run` activates `require_tools` at run start in an explicitly
+  configured dedicated Guardian profile, covering zero-Tool final answers.
 - `before_tool_call` blocks an Agent-run proposal until both Prometheus query
   and metric inspection Tools have succeeded in that run.
 - `before_agent_finalize` requests one bounded revision when a Guardian run is
@@ -103,6 +105,7 @@ mock Prometheus server, and a temporary device-auth bypass for its local RPC
 client. The bypass is removed by the script's exit trap and must not be copied
 into a normal Gateway profile.
 
-The proof also opts this non-bundled plugin into conversation hooks through
+The policy proof opts this non-bundled plugin into conversation hooks through
 `plugins.entries.dataops-guardian.hooks.allowConversationAccess=true`. OpenClaw
-otherwise rejects `before_agent_finalize` and reports a loader diagnostic.
+otherwise rejects `before_agent_run` and `before_agent_finalize` and reports a
+loader diagnostic.

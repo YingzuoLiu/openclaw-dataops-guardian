@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .openclaw-proof/
+.openclaw-proof-*/
 .openclaw-*-proof*/
 *.tgz
 coverage/

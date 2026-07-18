@@ -2,12 +2,13 @@
 
 Status: **passed** locally on 2026-07-18 with `openclaw@2026.6.9`.
 
-Guardian uses three related gates. They defend different boundaries and should
+Guardian uses four related gates. They defend different boundaries and should
 not be treated as interchangeable.
 
 | Gate | State used | Enforced outcome |
 | --- | --- | --- |
 | Incident Reducer | Durable session-extension evidence | Refuses `validation -> approval`; returns to `evidence_collection` |
+| `before_agent_run` | Explicit dedicated-profile configuration | Activates `require_tools` before the model can skip every Guardian Tool |
 | `before_tool_call` | Successful Guardian Tools in the active run | Blocks `guardian_propose_remediation` until required Tools succeeded |
 | `before_agent_finalize` | Successful Guardian Tools in the active run | Requests one bounded model revision before accepting an unsupported conclusion |
 
@@ -41,8 +42,18 @@ hook, the Reducer will not persist an unsupported transition to approval.
 
 ## Agent Tool and response gates
 
-For an Agent-driven Guardian run, `after_tool_call` records successful Tool
-names in OpenClaw's run-scoped plugin context. The required set is:
+For an Agent-driven Guardian run, `before_agent_run` activates the validator
+before the model receives its first prompt when the dedicated profile sets:
+
+```bash
+openclaw config set \
+  plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns true
+```
+
+This opt-in is intentionally disabled by default because the plugin is loaded
+globally; operators should enable it only for a dedicated Guardian profile.
+Once active, `after_tool_call` records successful Tool names in OpenClaw's
+run-scoped plugin context. The required set is:
 
 ```text
 guardian_query_prometheus
@@ -63,8 +74,15 @@ exhausted; it is not a permanent message-delivery veto. Production safety comes
 from the durable Reducer and Tool-call gates, which prevent unsupported approval
 and action even if prose is imperfect.
 
-The response gate activates only after the run touches a `guardian_*` Tool. It
-does not inspect or alter unrelated OpenClaw conversations.
+Without the dedicated-profile opt-in, the response gate activates only after a
+run touches a `guardian_*` Tool, so unrelated OpenClaw conversations are not
+altered. With the opt-in, even a zero-Tool final answer is evaluated.
+
+Each activation and finalize decision emits one sanitized JSON object through
+the plugin logger. It contains only the run id, hook, decision, required/missing
+Tool names, failed Tool names, and timestamp—never prompts, answers, credentials,
+or Tool payloads. The model-level evaluation harness will retain these records
+as JSONL raw evidence.
 
 ## Non-bundled plugin permission
 
@@ -76,17 +94,18 @@ openclaw config set \
   plugins.entries.dataops-guardian.hooks.allowConversationAccess true
 ```
 
-Without this setting, OpenClaw loads the two Tool hooks but rejects
-`before_agent_finalize` with a diagnostic. `npm run policy:proof` creates an
+Without this setting, OpenClaw loads the two Tool hooks but rejects the
+conversation hooks with a diagnostic. `npm run policy:proof` creates an
 isolated profile, applies the setting, runs runtime inspection, and asserts:
 
 ```json
 {
   "ok": true,
-  "hookCount": 3,
+  "hookCount": 4,
   "typedHooks": [
     "after_tool_call",
     "before_agent_finalize",
+    "before_agent_run",
     "before_tool_call"
   ],
   "diagnostics": []
