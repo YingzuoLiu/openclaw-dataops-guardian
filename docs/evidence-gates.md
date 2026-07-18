@@ -2,8 +2,8 @@
 
 Status: **passed** locally on 2026-07-18 with `openclaw@2026.6.9`.
 
-Guardian uses four related gates. They defend different boundaries and should
-not be treated as interchangeable.
+Guardian uses four related gates plus one lifecycle cleanup hook. They defend
+different boundaries and should not be treated as interchangeable.
 
 | Gate | State used | Enforced outcome |
 | --- | --- | --- |
@@ -53,7 +53,12 @@ openclaw config set \
 This opt-in is intentionally disabled by default because the plugin is loaded
 globally; operators should enable it only for a dedicated Guardian profile.
 Once active, `after_tool_call` records successful Tool names in OpenClaw's
-run-scoped plugin context. The required set is:
+run-scoped plugin context. On the pinned `2026.6.9` linked-plugin runtime, the
+live invocation proof found that the host can reject a run-context write even
+after `before_agent_run` has been invoked. Guardian therefore prefers the host
+context but falls back to a bounded in-process map keyed by run id; `agent_end`
+clears both stores. This fallback is process-local and is suitable only for the
+active run ledger, not durable incident or approval state. The required set is:
 
 ```text
 guardian_query_prometheus
@@ -101,8 +106,9 @@ isolated profile, applies the setting, runs runtime inspection, and asserts:
 ```json
 {
   "ok": true,
-  "hookCount": 4,
+  "hookCount": 5,
   "typedHooks": [
+    "agent_end",
     "after_tool_call",
     "before_agent_finalize",
     "before_agent_run",

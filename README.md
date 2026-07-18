@@ -45,10 +45,11 @@ session extension. The approval token also survives a Gateway restart. See
 
 The incident state is now schema version 2. A proposal can enter `approval`
 only after fresh Prometheus evidence passes the Reducer policy. The plugin also
-registers `before_agent_run`, `before_tool_call`, `after_tool_call`, and
-`before_agent_finalize` hooks. In an explicitly configured dedicated Guardian
-profile, the generic `require_tools` validator is active before the model's
-first turn, so both partial Tool use and zero-Tool final answers are covered.
+registers `before_agent_run`, `before_tool_call`, `after_tool_call`,
+`before_agent_finalize`, and the `agent_end` cleanup hook. In an explicitly
+configured dedicated Guardian profile, the generic `require_tools` validator
+is active before the model's first turn, so both partial Tool use and zero-Tool
+final answers are covered.
 Unsupported natural answers receive one bounded revision pass, while the Tool
 and Reducer gates continue to prevent unsupported proposals and approval. See
 [the evidence gate contract](docs/evidence-gates.md).
@@ -71,6 +72,16 @@ Run the loader-backed hook registration proof with:
 ```bash
 npm run policy:proof
 ```
+
+Run the zero-cost real Gateway Agent invocation proof with:
+
+```bash
+npm run hooks:live-proof
+```
+
+It uses a loopback scripted model that deliberately skips every Tool and
+asserts one bounded revision from the live `before_agent_finalize` response
+path. See [the live hook invocation report](docs/live-hook-invocation.md).
 
 ## Version contract
 

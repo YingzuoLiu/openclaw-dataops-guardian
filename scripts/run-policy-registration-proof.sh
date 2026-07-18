@@ -17,6 +17,7 @@ import { readFile } from "node:fs/promises";
 
 const inspection = JSON.parse(await readFile(process.argv[2], "utf8"));
 const expected = new Set([
+  "agent_end",
   "before_tool_call",
   "after_tool_call",
   "before_agent_run",

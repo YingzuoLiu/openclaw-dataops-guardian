@@ -14,6 +14,7 @@ import {
   buildProposalToolGateDecision,
   buildResponseGateDecision,
   GUARDIAN_RUN_CONTEXT_NAMESPACE,
+  type GuardianRunEvidence,
   recordGuardianToolObservation,
   shouldEnforceGuardianRequireTools,
 } from "./hooks/response-gate.js";
@@ -26,10 +27,52 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   name: "DataOps Guardian",
   description: "Persists incident workflow state for DataOps investigations.",
   register(api) {
+    const fallbackRunEvidence = new Map<string, GuardianRunEvidence>();
+    const fallbackWarnings = new Set<string>();
+
     const logGateAudit = (
       event: ReturnType<typeof buildGuardianGateAuditEvent>,
     ): void => {
       api.logger.info(JSON.stringify(event));
+    };
+
+    const readRunEvidence = (runId: string): GuardianRunEvidence | undefined =>
+      (api.runContext.getRunContext({
+        runId,
+        namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+      }) as GuardianRunEvidence | undefined) ?? fallbackRunEvidence.get(runId);
+
+    const storeRunEvidence = (
+      runId: string,
+      value: GuardianRunEvidence,
+    ): void => {
+      const stored = api.runContext.setRunContext({
+        runId,
+        namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+        value,
+      });
+      if (stored) {
+        fallbackRunEvidence.delete(runId);
+        fallbackWarnings.delete(runId);
+        return;
+      }
+
+      fallbackRunEvidence.delete(runId);
+      fallbackRunEvidence.set(runId, value);
+      if (!fallbackWarnings.has(runId)) {
+        api.logger.warn(
+          `[dataops-guardian] host run context rejected a write; using bounded in-process fallback run=${runId}`,
+        );
+        fallbackWarnings.add(runId);
+      }
+      while (fallbackRunEvidence.size > 512) {
+        const oldestRunId = fallbackRunEvidence.keys().next().value;
+        if (oldestRunId === undefined) {
+          break;
+        }
+        fallbackRunEvidence.delete(oldestRunId);
+        fallbackWarnings.delete(oldestRunId);
+      }
     };
 
     api.registerTool(createInspectMetricSnapshotTool());
@@ -74,24 +117,9 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           };
         }
 
-        const current = api.runContext.getRunContext({
-          runId: ctx.runId,
-          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-        });
+        const current = readRunEvidence(ctx.runId);
         const next = activateGuardianRunEvidence(current);
-        const stored = api.runContext.setRunContext({
-          runId: ctx.runId,
-          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-          value: next,
-        });
-        if (!stored) {
-          return {
-            outcome: "block" as const,
-            reason: "Guardian require_tools run context was rejected",
-            message: "Guardian validation could not initialize this run.",
-            category: "guardian_validator_state",
-          };
-        }
+        storeRunEvidence(ctx.runId, next);
         logGateAudit(
           buildGuardianGateAuditEvent({
             state: next,
@@ -110,20 +138,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         const runId = event.runId ?? ctx.runId;
         let runEvidence;
         if (runId) {
-          const current = api.runContext.getRunContext({
-            runId,
-            namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-          });
+          const current = readRunEvidence(runId);
           runEvidence = recordGuardianToolObservation(current, {
             toolName: event.toolName,
             succeeded: false,
           });
           if (runEvidence) {
-            api.runContext.setRunContext({
-              runId,
-              namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-              value: runEvidence,
-            });
+            storeRunEvidence(runId, runEvidence);
           }
         }
 
@@ -167,20 +188,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         if (!runId) {
           return;
         }
-        const current = api.runContext.getRunContext({
-          runId,
-          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-        });
+        const current = readRunEvidence(runId);
         const next = recordGuardianToolObservation(current, {
           toolName: event.toolName,
           succeeded: !event.error,
         });
         if (next) {
-          api.runContext.setRunContext({
-            runId,
-            namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-            value: next,
-          });
+          storeRunEvidence(runId, next);
         }
       },
       { priority: 100, timeoutMs: 1_000 },
@@ -193,15 +207,13 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         if (!runId) {
           return;
         }
-        let runEvidence = api.runContext.getRunContext({
-          runId,
-          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
-        });
+        let runEvidence = readRunEvidence(runId);
         if (
           runEvidence === undefined &&
           shouldEnforceGuardianRequireTools(api.pluginConfig)
         ) {
           runEvidence = activateGuardianRunEvidence(undefined);
+          storeRunEvidence(runId, runEvidence);
         }
         const decision = buildResponseGateDecision(runEvidence);
         if (runEvidence !== undefined) {
@@ -215,6 +227,23 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           );
         }
         return decision;
+      },
+      { priority: 100, timeoutMs: 1_000 },
+    );
+
+    api.on(
+      "agent_end",
+      (event, ctx) => {
+        const runId = event.runId ?? ctx.runId;
+        if (!runId) {
+          return;
+        }
+        fallbackRunEvidence.delete(runId);
+        fallbackWarnings.delete(runId);
+        api.runContext.clearRunContext({
+          runId,
+          namespace: GUARDIAN_RUN_CONTEXT_NAMESPACE,
+        });
       },
       { priority: 100, timeoutMs: 1_000 },
     );

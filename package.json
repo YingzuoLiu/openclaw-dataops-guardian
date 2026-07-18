@@ -13,6 +13,7 @@
     "check": "npm run build && npm test",
     "plugin:inspect": "openclaw plugins inspect dataops-guardian --runtime --json",
     "policy:proof": "bash scripts/run-policy-registration-proof.sh",
+    "hooks:live-proof": "bash scripts/run-live-hook-invocation-proof.sh",
     "proof1:rpc": "node scripts/proof1-rpc.mjs",
     "proof2:rpc": "node scripts/proof2-rpc.mjs",
     "proof3:rpc": "node scripts/proof3-rpc.mjs",

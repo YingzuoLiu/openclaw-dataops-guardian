@@ -39,6 +39,9 @@ function createPluginHarness(options?: {
         runContexts.set(`${params.runId}:${params.namespace}`, params.value);
         return true;
       },
+      clearRunContext: (params: { runId: string; namespace: string }) => {
+        runContexts.delete(`${params.runId}:${params.namespace}`);
+      },
     },
     session: {
       state: {
@@ -67,6 +70,7 @@ describe("DataOps Guardian plugin hook wiring", () => {
 
     expect([...hooks.keys()].sort()).toEqual([
       "after_tool_call",
+      "agent_end",
       "before_agent_finalize",
       "before_agent_run",
       "before_tool_call",
@@ -99,19 +103,27 @@ describe("DataOps Guardian plugin hook wiring", () => {
     expect(logs).toEqual([]);
   });
 
-  it("fails closed when the host rejects validator run state", async () => {
-    const { hooks } = createPluginHarness({
+  it("keeps enforcing through a bounded fallback when the host rejects run state", async () => {
+    const { hooks, logs } = createPluginHarness({
       enforceRequireToolsOnAgentRuns: true,
       rejectRunContextWrites: true,
     });
 
-    const decision = await hooks
+    const activation = await hooks
       .get("before_agent_run")
       ?.({}, { runId: "run-rejected" });
+    const decision = await hooks
+      .get("before_agent_finalize")
+      ?.({ runId: "run-rejected" }, { runId: "run-rejected" });
 
+    expect(activation).toBeUndefined();
     expect(decision).toMatchObject({
-      outcome: "block",
-      category: "guardian_validator_state",
+      action: "revise",
+      retry: { maxAttempts: 1 },
     });
+    expect(logs.map((line) => JSON.parse(line))).toMatchObject([
+      { hook: "before_agent_run", decision: "activate" },
+      { hook: "before_agent_finalize", decision: "revise" },
+    ]);
   });
 });
