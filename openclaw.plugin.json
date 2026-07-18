@@ -1,0 +1,22 @@
+{
+  "id": "dataops-guardian",
+  "name": "DataOps Guardian",
+  "description": "Persists incident workflow state and enforces DataOps investigation policy.",
+  "contracts": {
+    "tools": [
+      "guardian_inspect_metric_snapshot"
+    ]
+  },
+  "toolMetadata": {
+    "guardian_inspect_metric_snapshot": {
+      "optional": false
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false
+  }
+}

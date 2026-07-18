@@ -1,0 +1,42 @@
+{
+  "name": "openclaw-dataops-guardian",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "A compatibility-first OpenClaw DataOps workflow plugin.",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "check": "npm run build && npm test",
+    "plugin:inspect": "openclaw plugins inspect dataops-guardian --runtime --json",
+    "proof1:rpc": "node scripts/proof1-rpc.mjs",
+    "proof2:rpc": "node scripts/proof2-rpc.mjs",
+    "proof3:rpc": "node scripts/proof3-rpc.mjs"
+  },
+  "dependencies": {
+    "@openclaw/lobster": "2026.6.9",
+    "openclaw": "2026.6.9",
+    "typebox": "1.1.39"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.6.9",
+      "minGatewayVersion": "2026.6.9"
+    },
+    "build": {
+      "openclawVersion": "2026.6.9",
+      "pluginSdkVersion": "2026.6.9"
+    }
+  }
+}
