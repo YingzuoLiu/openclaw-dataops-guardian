@@ -17,7 +17,7 @@ export const INCIDENT_STAGES = [
 export type IncidentStage = (typeof INCIDENT_STAGES)[number];
 
 export type IncidentState = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   alertId: string;
   stage: IncidentStage;
   evidence: Array<{
@@ -27,9 +27,16 @@ export type IncidentState = {
   }>;
   proposedAction: string | null;
   approvalStatus: "not_requested" | "pending" | "approved" | "denied";
+  evidenceValidation: {
+    status: "not_checked" | "passed" | "failed";
+    checkedAt: string | null;
+    issues: string[];
+  };
   retryCount: number;
   updatedAt: string;
 };
+
+export const MAX_REMEDIATION_RETRIES = 2;
 
 const ALLOWED_STAGE_TRANSITIONS: Record<
   IncidentStage,

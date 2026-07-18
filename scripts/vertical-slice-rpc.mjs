@@ -143,6 +143,11 @@ async function startSlice() {
   });
   state = recordRemediationProposal(state, proposal, now());
   await patchState(state);
+  if (state.stage !== "approval" || state.evidenceValidation?.status !== "passed") {
+    throw new Error(
+      `incident evidence did not pass validation: ${JSON.stringify(state.evidenceValidation)}`,
+    );
+  }
 
   const lobster = await invokeTool("lobster", {
     action: "run",

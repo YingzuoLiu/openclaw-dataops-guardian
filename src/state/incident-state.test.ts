@@ -8,12 +8,17 @@ import {
 } from "./incident-state.js";
 
 const incidentState: IncidentState = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   alertId: "payment-success-rate-drop",
   stage: "alert_received",
   evidence: [],
   proposedAction: null,
   approvalStatus: "not_requested",
+  evidenceValidation: {
+    status: "not_checked",
+    checkedAt: null,
+    issues: [],
+  },
   retryCount: 0,
   updatedAt: "2026-07-18T00:00:00.000Z",
 };
@@ -21,12 +26,17 @@ const incidentState: IncidentState = {
 describe("projectIncidentState", () => {
   it("projects JSON-compatible incident state without changing it", () => {
     const state = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       alertId: "payment-success-rate-drop",
       stage: "alert_received",
       evidence: [],
       proposedAction: null,
       approvalStatus: "not_requested",
+      evidenceValidation: {
+        status: "not_checked",
+        checkedAt: null,
+        issues: [],
+      },
       retryCount: 0,
       updatedAt: "2026-07-18T00:00:00.000Z",
     } satisfies PluginJsonValue;

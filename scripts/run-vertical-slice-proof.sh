@@ -48,6 +48,8 @@ npm run build
   "http://127.0.0.1:$GUARDIAN_MOCK_PROMETHEUS_PORT" >/dev/null
 ./node_modules/.bin/openclaw config set \
   plugins.entries.dataops-guardian.config.prometheusTimeoutMs 5000 >/dev/null
+./node_modules/.bin/openclaw config set \
+  plugins.entries.dataops-guardian.hooks.allowConversationAccess true >/dev/null
 ./node_modules/.bin/openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
 
 node scripts/mock-prometheus-server.mjs \
