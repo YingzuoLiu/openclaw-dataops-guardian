@@ -10,10 +10,12 @@ describe("inspectMetricSnapshot", () => {
         metric: "payment_success_rate",
         currentValue: 0.76,
         baselineValue: 0.95,
+        source: "prometheus:payment_success_rate",
       }),
     ).toMatchObject({
       relativeChange: -0.19999999999999996,
       classification: "critical",
+      source: "prometheus:payment_success_rate",
     });
   });
 
@@ -28,6 +30,7 @@ describe("inspectMetricSnapshot", () => {
     ).toMatchObject({
       relativeChange: null,
       classification: "within_expected_range",
+      source: "supplied_snapshot",
     });
   });
 });

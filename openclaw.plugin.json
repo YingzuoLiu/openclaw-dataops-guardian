@@ -5,7 +5,8 @@
   "contracts": {
     "tools": [
       "guardian_inspect_metric_snapshot",
-      "guardian_propose_remediation"
+      "guardian_propose_remediation",
+      "guardian_query_prometheus"
     ]
   },
   "toolMetadata": {
@@ -14,6 +15,9 @@
     },
     "guardian_propose_remediation": {
       "optional": false
+    },
+    "guardian_query_prometheus": {
+      "optional": false
     }
   },
   "activation": {
@@ -21,6 +25,18 @@
   },
   "configSchema": {
     "type": "object",
-    "additionalProperties": false
+    "additionalProperties": false,
+    "properties": {
+      "prometheusBaseUrl": {
+        "type": "string",
+        "description": "Administrator-configured Prometheus base URL."
+      },
+      "prometheusTimeoutMs": {
+        "type": "integer",
+        "minimum": 200,
+        "maximum": 30000,
+        "default": 5000
+      }
+    }
   }
 }

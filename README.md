@@ -27,8 +27,9 @@ The follow-on compatibility proofs also passed:
 - [Proof 3: Lobster approval recovery](docs/proof-3-lobster-approval.md)
 
 The compatibility risks are retired and the first narrow slice below is now
-implemented. It remains a prototype: the metric tool consumes a supplied
-snapshot and the Lobster workflow performs only synthetic local steps.
+implemented. It remains a prototype: the alert value comes from a read-only
+Prometheus instant query, while the Lobster workflow performs only synthetic
+local remediation and recovery steps.
 
 ## First vertical slice
 
@@ -42,11 +43,18 @@ Both approve (`completed`) and deny (`blocked`) paths persist through the native
 session extension. The approval token also survives a Gateway restart. See
 [the vertical slice report](docs/vertical-slice.md).
 
+The Prometheus endpoint is administrator configuration, not a Tool argument.
+The Agent supplies only PromQL, and Guardian requires the query to return
+exactly one finite sample. See [the adapter contract](docs/prometheus-adapter.md).
+
 Run the isolated approved-path proof with:
 
 ```bash
 npm run slice:proof
 ```
+
+The proof starts its own loopback-only mock Prometheus API and does not require
+or contact a production monitoring system.
 
 ## Version contract
 

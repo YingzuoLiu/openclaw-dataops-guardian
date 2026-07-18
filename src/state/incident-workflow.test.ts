@@ -19,6 +19,7 @@ describe("incident vertical slice reducer", () => {
       metric: "payment_success_rate",
       currentValue: 0.7,
       baselineValue: 1,
+      source: "prometheus:payment_success_rate{service=\"payments\"}",
     });
     const proposal = proposeRemediation({
       alertId: "payment-success-rate-drop",
@@ -47,6 +48,9 @@ describe("incident vertical slice reducer", () => {
       retryCount: 0,
     });
     expect(state.evidence).toHaveLength(4);
+    expect(state.evidence[0]?.source).toBe(
+      'prometheus:payment_success_rate{service="payments"}',
+    );
   });
 
   it("blocks a denied remediation", () => {

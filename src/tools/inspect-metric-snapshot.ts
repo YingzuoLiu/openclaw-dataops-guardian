@@ -9,6 +9,7 @@ export type MetricSnapshotResult = {
   relativeChange: number | null;
   classification: "within_expected_range" | "warning" | "critical";
   evidenceSummary: string;
+  source: string;
 };
 
 export function inspectMetricSnapshot(params: {
@@ -16,6 +17,7 @@ export function inspectMetricSnapshot(params: {
   metric: string;
   currentValue: number;
   baselineValue: number;
+  source?: string;
 }): MetricSnapshotResult {
   const relativeChange =
     params.baselineValue === 0
@@ -42,6 +44,7 @@ export function inspectMetricSnapshot(params: {
       relativeChange === null
         ? `${params.metric} baseline is zero; observed value is ${params.currentValue}.`
         : `${params.metric} changed ${(relativeChange * 100).toFixed(1)}% from baseline (${params.baselineValue} -> ${params.currentValue}); classified as ${classification}.`,
+    source: params.source?.trim() || "supplied_snapshot",
   };
 }
 
@@ -57,6 +60,7 @@ export function createInspectMetricSnapshotTool(): AnyAgentTool {
         metric: Type.String({ minLength: 1 }),
         currentValue: Type.Number(),
         baselineValue: Type.Number(),
+        source: Type.Optional(Type.String({ minLength: 1, maxLength: 4_096 })),
       },
       { additionalProperties: false },
     ),
@@ -66,6 +70,7 @@ export function createInspectMetricSnapshotTool(): AnyAgentTool {
         metric: string;
         currentValue: number;
         baselineValue: number;
+        source?: string;
       };
 
       return jsonResult(inspectMetricSnapshot(params));

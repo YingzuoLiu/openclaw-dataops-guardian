@@ -9,6 +9,7 @@ import {
 } from "./state/incident-state.js";
 import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot.js";
 import { createProposeRemediationTool } from "./tools/propose-remediation.js";
+import { createQueryPrometheusTool } from "./tools/query-prometheus.js";
 
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "dataops-guardian",
@@ -17,12 +18,21 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
   register(api) {
     api.registerTool(createInspectMetricSnapshotTool());
     api.registerTool(createProposeRemediationTool());
+    api.registerTool(createQueryPrometheusTool(api.pluginConfig));
     api.registerToolMetadata({
       toolName: "guardian_inspect_metric_snapshot",
       displayName: "Inspect Metric Snapshot",
       description: "Classify one metric snapshot against its expected baseline.",
       risk: "low",
       tags: ["dataops", "investigation", "read-only"],
+    });
+    api.registerToolMetadata({
+      toolName: "guardian_query_prometheus",
+      displayName: "Query Prometheus",
+      description:
+        "Run a read-only instant query against the configured Prometheus endpoint.",
+      risk: "low",
+      tags: ["dataops", "prometheus", "monitoring", "read-only"],
     });
     api.registerToolMetadata({
       toolName: "guardian_propose_remediation",

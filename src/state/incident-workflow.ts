@@ -38,7 +38,7 @@ export function recordMetricEvidence(
       evidence: [
         ...collecting.evidence,
         {
-          source: "guardian_inspect_metric_snapshot",
+          source: result.source,
           observedAt,
           summary: result.evidenceSummary,
         },

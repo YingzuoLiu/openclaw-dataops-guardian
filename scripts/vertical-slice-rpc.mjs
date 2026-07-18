@@ -101,12 +101,13 @@ async function invokeTool(name, args) {
 }
 
 async function startSlice() {
-  const alert = {
+  const alertBase = {
     alertId: "payment-success-rate-drop",
     metric: "payment_success_rate",
-    currentValue: 0.7,
     baselineValue: 1,
   };
+  const prometheusQuery =
+    'payment_success_rate{service="payments",environment="proof"}';
 
   await client.request("sessions.create", {
     key: SESSION_KEY,
@@ -114,17 +115,25 @@ async function startSlice() {
     label: `DataOps Guardian: ${SESSION_KEY.split(":").at(-1)}`,
   });
 
+  const prometheus = await invokeTool("guardian_query_prometheus", {
+    query: prometheusQuery,
+  });
+  const alert = {
+    ...alertBase,
+    currentValue: prometheus.currentValue,
+  };
+
   let state = openIncident({
     alertId: alert.alertId,
-    occurredAt: now(),
+    occurredAt: prometheus.observedAt,
   });
   await patchState(state);
 
   const metricResult = await invokeTool(
     "guardian_inspect_metric_snapshot",
-    alert,
+    { ...alert, source: `prometheus:${prometheus.query}` },
   );
-  state = recordMetricEvidence(state, metricResult, now());
+  state = recordMetricEvidence(state, metricResult, prometheus.observedAt);
   await patchState(state);
 
   const proposal = await invokeTool("guardian_propose_remediation", {
@@ -173,6 +182,8 @@ async function startSlice() {
     sessionKey: SESSION_KEY,
     stage: state.stage,
     classification: metricResult.classification,
+    currentValue: prometheus.currentValue,
+    metricSource: "prometheus",
     proposedAction: state.proposedAction,
     approvalStatus: state.approvalStatus,
     workflowStatus: lobster.status,
