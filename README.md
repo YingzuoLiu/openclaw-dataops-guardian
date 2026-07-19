@@ -1,7 +1,30 @@
 # OpenClaw DataOps Guardian
 
+[![CI](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml)
+
 Compatibility-first prototype for a DataOps incident investigation workflow on
 OpenClaw.
+
+> **Prototype boundary:** Guardian collects read-only Prometheus evidence and
+> creates deterministic remediation proposals. The included remediation and
+> recovery steps are synthetic and do not mutate production.
+
+For installation, dedicated-profile configuration, runtime verification, and
+safe removal, see the [Operator guide](docs/operator-guide.md). Security reports
+and supported-version policy are documented in [SECURITY.md](SECURITY.md).
+
+## What this repository demonstrates
+
+- native OpenClaw session-extension incident state that survives Gateway
+  restart;
+- a read-only Prometheus Tool whose endpoint remains administrator-owned;
+- durable Reducer, Tool-call, and bounded response gates for evidence-backed
+  remediation proposals;
+- resumable Lobster approval with deterministic synthetic remediation;
+- a live Gateway Hook proof and a 24-trial real-model A/B evaluation with raw
+  evidence and explicit limitations.
+
+## Compatibility-first development path
 
 The first milestone is deliberately narrow: prove that plugin-owned incident
 state works on `openclaw@2026.6.9` before implementing investigation tools or
@@ -119,7 +142,7 @@ repeated on newer stable releases.
 ## Local checks
 
 ```bash
-npm install
+npm ci
 npm run check
 ```
 
