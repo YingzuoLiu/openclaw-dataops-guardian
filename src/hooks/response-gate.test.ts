@@ -6,6 +6,7 @@ import {
   buildProposalToolGateDecision,
   buildResponseGateDecision,
   recordGuardianToolObservation,
+  resolveGuardianRequireToolsMode,
   shouldEnforceGuardianRequireTools,
 } from "./response-gate.js";
 
@@ -32,6 +33,32 @@ describe("Guardian before_agent_finalize response gate", () => {
         enforceRequireToolsOnAgentRuns: true,
       }),
     ).toBe(true);
+  });
+
+  it("resolves explicit A/B gate modes while preserving the legacy switch", () => {
+    expect(resolveGuardianRequireToolsMode(undefined)).toBe(
+      "on_guardian_tool",
+    );
+    expect(
+      resolveGuardianRequireToolsMode({ requireToolsGateMode: "disabled" }),
+    ).toBe("disabled");
+    expect(
+      resolveGuardianRequireToolsMode({
+        requireToolsGateMode: "all_agent_runs",
+      }),
+    ).toBe("all_agent_runs");
+    expect(
+      resolveGuardianRequireToolsMode({
+        enforceRequireToolsOnAgentRuns: true,
+        requireToolsGateMode: "on_guardian_tool",
+      }),
+    ).toBe("all_agent_runs");
+    expect(
+      resolveGuardianRequireToolsMode({
+        enforceRequireToolsOnAgentRuns: true,
+        requireToolsGateMode: "disabled",
+      }),
+    ).toBe("disabled");
   });
 
   it("requests one bounded revision when required tools are missing", () => {

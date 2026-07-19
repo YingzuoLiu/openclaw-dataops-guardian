@@ -47,11 +47,15 @@ before the model receives its first prompt when the dedicated profile sets:
 
 ```bash
 openclaw config set \
-  plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns true
+  plugins.entries.dataops-guardian.config.requireToolsGateMode all_agent_runs
 ```
 
 This opt-in is intentionally disabled by default because the plugin is loaded
 globally; operators should enable it only for a dedicated Guardian profile.
+The legacy `enforceRequireToolsOnAgentRuns=true` setting remains supported.
+`requireToolsGateMode=disabled` exists for controlled A/B evaluation and turns
+off only this run-scoped Gate; it does not bypass durable incident evidence or
+approval policy.
 Once active, `after_tool_call` records successful Tool names in OpenClaw's
 run-scoped plugin context. On the pinned `2026.6.9` linked-plugin runtime, the
 live invocation proof found that the host can reject a run-context write even

@@ -19,6 +19,11 @@ export const GUARDIAN_REQUIRE_TOOLS = {
 
 const GUARDIAN_TOOL_PREFIX = "guardian_";
 
+export type GuardianRequireToolsMode =
+  | "disabled"
+  | "on_guardian_tool"
+  | "all_agent_runs";
+
 export type GuardianRunEvidence = {
   active: true;
   ledger: ToolCallLedger;
@@ -63,7 +68,25 @@ function readLedger(value: unknown): ToolCallLedger {
 }
 
 export function shouldEnforceGuardianRequireTools(rawConfig: unknown): boolean {
-  return readRecord(rawConfig)?.enforceRequireToolsOnAgentRuns === true;
+  return resolveGuardianRequireToolsMode(rawConfig) === "all_agent_runs";
+}
+
+export function resolveGuardianRequireToolsMode(
+  rawConfig: unknown,
+): GuardianRequireToolsMode {
+  const config = readRecord(rawConfig);
+  const explicitMode = config?.requireToolsGateMode;
+  if (explicitMode === "disabled" || explicitMode === "all_agent_runs") {
+    return explicitMode;
+  }
+
+  // OpenClaw materializes the manifest default (`on_guardian_tool`) in the
+  // runtime config. Preserve the legacy true switch in that case. Operators
+  // can still select `disabled` explicitly; to downgrade a legacy true profile
+  // to on-tool-use, unset the legacy switch.
+  return config?.enforceRequireToolsOnAgentRuns === true
+    ? "all_agent_runs"
+    : "on_guardian_tool";
 }
 
 export function activateGuardianRunEvidence(

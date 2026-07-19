@@ -83,6 +83,18 @@ It uses a loopback scripted model that deliberately skips every Tool and
 asserts one bounded revision from the live `before_agent_finalize` response
 path. See [the live hook invocation report](docs/live-hook-invocation.md).
 
+The next milestone is a real-model, independent-trial OpenRouter A/B. The
+runner pairs byte-identical baseline/gated prompts, isolates every session,
+retains prompt/transcript/Tool/Hook evidence, and stops at a configured cost
+budget. Preview the no-cost schedule with:
+
+```bash
+npm run eval:openrouter:plan
+```
+
+See [the evaluation contract](docs/openrouter-ab-evaluation.md). Paid trials
+remain opt-in and require `OPENROUTER_API_KEY` in the caller's environment.
+
 ## Version contract
 
 - Node.js `>=22.19.0`

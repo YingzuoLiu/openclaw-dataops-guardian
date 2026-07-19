@@ -3,5 +3,6 @@ dist/
 .openclaw-proof/
 .openclaw-proof-*/
 .openclaw-*-proof*/
+.openclaw-openrouter-ab/
 *.tgz
 coverage/

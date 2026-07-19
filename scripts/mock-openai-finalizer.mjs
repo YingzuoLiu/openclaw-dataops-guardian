@@ -14,6 +14,16 @@ if (!requestLog) {
 }
 
 let completionCount = 0;
+const behavior =
+  process.env.GUARDIAN_MOCK_MODEL_BEHAVIOR ?? "persistent_direct_answer";
+if (
+  behavior !== "persistent_direct_answer" &&
+  behavior !== "comply_on_revision"
+) {
+  throw new Error(
+    "GUARDIAN_MOCK_MODEL_BEHAVIOR must be persistent_direct_answer or comply_on_revision",
+  );
+}
 
 async function readJson(request) {
   const chunks = [];
@@ -30,7 +40,23 @@ async function readJson(request) {
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
 }
 
-function completionPayload(id, model, content) {
+function completionPayload(id, model, response) {
+  const message = response.toolCall
+    ? {
+        role: "assistant",
+        content: null,
+        tool_calls: [
+          {
+            id: response.toolCall.id,
+            type: "function",
+            function: {
+              name: response.toolCall.name,
+              arguments: JSON.stringify(response.toolCall.arguments),
+            },
+          },
+        ],
+      }
+    : { role: "assistant", content: response.content };
   return {
     id,
     object: "chat.completion",
@@ -39,8 +65,8 @@ function completionPayload(id, model, content) {
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content },
-        finish_reason: "stop",
+        message,
+        finish_reason: response.toolCall ? "tool_calls" : "stop",
       },
     ],
     usage: {
@@ -53,7 +79,7 @@ function completionPayload(id, model, content) {
 
 function writeSse(response, payload) {
   const { id, created, model } = payload;
-  const content = payload.choices[0].message.content;
+  const message = payload.choices[0].message;
   const chunks = [
     {
       id,
@@ -64,19 +90,50 @@ function writeSse(response, payload) {
         { index: 0, delta: { role: "assistant" }, finish_reason: null },
       ],
     },
+    message.tool_calls
+      ? {
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: {
+                tool_calls: message.tool_calls.map((call, index) => ({
+                  index,
+                  ...call,
+                })),
+              },
+              finish_reason: null,
+            },
+          ],
+        }
+      : {
+          id,
+          object: "chat.completion.chunk",
+          created,
+          model,
+          choices: [
+            {
+              index: 0,
+              delta: { content: message.content },
+              finish_reason: null,
+            },
+          ],
+        },
     {
       id,
       object: "chat.completion.chunk",
       created,
       model,
-      choices: [{ index: 0, delta: { content }, finish_reason: null }],
-    },
-    {
-      id,
-      object: "chat.completion.chunk",
-      created,
-      model,
-      choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+      choices: [
+        {
+          index: 0,
+          delta: {},
+          finish_reason: payload.choices[0].finish_reason,
+        },
+      ],
       usage: payload.usage,
     },
   ];
@@ -128,6 +185,17 @@ const server = createServer(async (request, response) => {
     completionCount += 1;
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const latestMessage = messages.at(-1);
+    const priorToolNames = messages.flatMap((message) =>
+      Array.isArray(message?.tool_calls)
+        ? message.tool_calls.map((call) => call?.function?.name).filter(Boolean)
+        : [],
+    );
+    const revisionRequested = messages.some(
+      (message) =>
+        message?.role === "user" &&
+        typeof message.content === "string" &&
+        message.content.includes("Guardian evidence validation failed"),
+    );
 
     await appendFile(
       requestLog,
@@ -139,16 +207,58 @@ const server = createServer(async (request, response) => {
         messageCount: messages.length,
         latestRole: latestMessage?.role ?? null,
         toolDefinitionCount: Array.isArray(body.tools) ? body.tools.length : 0,
+        behavior,
+        revisionRequested,
+        priorToolNames,
         recordedAt: new Date().toISOString(),
       })}\n`,
       "utf8",
     );
 
     const model = body.model ?? "scripted-finalizer";
+    let scriptedResponse = {
+      content: "Payment success rate is healthy. No action is needed.",
+    };
+    if (behavior === "comply_on_revision" && revisionRequested) {
+      if (!priorToolNames.includes("guardian_query_prometheus")) {
+        scriptedResponse = {
+          toolCall: {
+            id: `guardian-query-${completionCount}`,
+            name: "guardian_query_prometheus",
+            arguments: {
+              query:
+                'payment_success_rate{service="payments",environment="proof"}',
+            },
+          },
+        };
+      } else if (
+        !priorToolNames.includes("guardian_inspect_metric_snapshot")
+      ) {
+        scriptedResponse = {
+          toolCall: {
+            id: `guardian-inspect-${completionCount}`,
+            name: "guardian_inspect_metric_snapshot",
+            arguments: {
+              alertId: "INC-PAYMENTS-FIXTURE",
+              metric: "payment_success_rate",
+              currentValue: 0.7,
+              baselineValue: 1,
+              source:
+                'prometheus:payment_success_rate{service="payments",environment="proof"}',
+            },
+          },
+        };
+      } else {
+        scriptedResponse = {
+          content:
+            "Live Prometheus evidence is 0.7 versus baseline 1.0; the inspection classifies payment_success_rate as critical.",
+        };
+      }
+    }
     const payload = completionPayload(
       `guardian-proof-${completionCount}`,
       model,
-      "Payment success rate is healthy. No action is needed.",
+      scriptedResponse,
     );
 
     if (body.stream === true) {

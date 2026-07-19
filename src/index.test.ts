@@ -9,6 +9,10 @@ type RegisteredHook = (
 
 function createPluginHarness(options?: {
   enforceRequireToolsOnAgentRuns?: boolean;
+  requireToolsGateMode?:
+    | "disabled"
+    | "on_guardian_tool"
+    | "all_agent_runs";
   rejectRunContextWrites?: boolean;
 }) {
   const hooks = new Map<string, RegisteredHook>();
@@ -19,6 +23,7 @@ function createPluginHarness(options?: {
     pluginConfig: {
       enforceRequireToolsOnAgentRuns:
         options?.enforceRequireToolsOnAgentRuns ?? false,
+      requireToolsGateMode: options?.requireToolsGateMode,
     },
     registerTool: () => undefined,
     registerToolMetadata: () => undefined,
@@ -98,6 +103,31 @@ describe("DataOps Guardian plugin hook wiring", () => {
     const decision = await hooks
       .get("before_agent_finalize")
       ?.({ runId: "run-unrelated" }, { runId: "run-unrelated" });
+
+    expect(decision).toBeUndefined();
+    expect(logs).toEqual([]);
+  });
+
+  it("provides a true gate-off arm for controlled A/B evaluation", async () => {
+    const { hooks, logs } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+    });
+
+    await hooks.get("before_agent_run")?.({}, { runId: "run-baseline" });
+    await hooks.get("before_tool_call")?.(
+      { runId: "run-baseline", toolName: "guardian_query_prometheus" },
+      { runId: "run-baseline" },
+    );
+    await hooks.get("after_tool_call")?.(
+      {
+        runId: "run-baseline",
+        toolName: "guardian_query_prometheus",
+      },
+      { runId: "run-baseline" },
+    );
+    const decision = await hooks
+      .get("before_agent_finalize")
+      ?.({ runId: "run-baseline" }, { runId: "run-baseline" });
 
     expect(decision).toBeUndefined();
     expect(logs).toEqual([]);

@@ -137,6 +137,19 @@ const hasRevision = auditEvents
     (event) =>
       event.hook === "before_agent_finalize" && event.decision === "revise",
   );
+const activationEvents = auditEvents.filter(
+  (event) =>
+    event.hook === "before_agent_run" && event.decision === "activate",
+);
+const revisionEvents = auditEvents.filter(
+  (event) =>
+    event.hook === "before_agent_finalize" && event.decision === "revise",
+);
+const observedRunIds = new Set(
+  [...activationEvents, ...revisionEvents]
+    .map((event) => event.runId)
+    .filter(Boolean),
+);
 
 if (!rpc.ok || !rpc.gatewayAgentRun) {
   throw new Error(`Gateway agent proof failed: ${JSON.stringify(rpc)}`);
@@ -149,6 +162,19 @@ if (!hasActivation || !hasRevision) {
 if (requests.length !== 2) {
   throw new Error(
     `expected one initial model call plus one bounded revision, observed ${requests.length}`,
+  );
+}
+if (
+  activationEvents.length !== requests.length ||
+  revisionEvents.length !== requests.length
+) {
+  throw new Error(
+    `expected each model attempt to cross both hooks: ${JSON.stringify({ activations: activationEvents.length, revisions: revisionEvents.length, modelCalls: requests.length })}`,
+  );
+}
+if (observedRunIds.size !== 1 || !observedRunIds.has(rpc.runId)) {
+  throw new Error(
+    `expected both attempts to share the Gateway run id: ${JSON.stringify({ rpcRunId: rpc.runId, observedRunIds: [...observedRunIds] })}`,
   );
 }
 
@@ -164,6 +190,8 @@ const proof = {
   gatewayAgentRun: true,
   hookActivationObserved: hasActivation,
   finalizeRevisionObserved: hasRevision,
+  hookAttemptsObserved: activationEvents.length,
+  singleRunAcrossAttempts: true,
   modelCalls: requests.length,
   expectedModelCalls: 2,
   apiCostUsd: 0,

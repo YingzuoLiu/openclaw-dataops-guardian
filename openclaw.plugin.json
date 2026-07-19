@@ -40,7 +40,17 @@
       "enforceRequireToolsOnAgentRuns": {
         "type": "boolean",
         "default": false,
-        "description": "Activate Guardian require_tools validation at the start of every Agent run in this dedicated profile."
+        "description": "Legacy compatibility switch. true maps to requireToolsGateMode=all_agent_runs."
+      },
+      "requireToolsGateMode": {
+        "type": "string",
+        "enum": [
+          "disabled",
+          "on_guardian_tool",
+          "all_agent_runs"
+        ],
+        "default": "on_guardian_tool",
+        "description": "Control require_tools enforcement. disabled is intended for controlled A/B evaluation; durable incident and approval policy remains active."
       }
     }
   }

@@ -26,6 +26,8 @@ The proof asserts all of the following:
 - the audit log contains `before_agent_finalize` with `decision=revise`;
 - the scripted model receives exactly two completion requests: the initial
   pass and one revision pass;
+- both passes cross `before_agent_run` and `before_agent_finalize`, and all
+  four audit events carry the same Gateway run id;
 - the model server is loopback-only and reports zero API cost.
 
 Run it with:
@@ -50,6 +52,8 @@ The clean proof run produced:
   "gatewayAgentRun": true,
   "hookActivationObserved": true,
   "finalizeRevisionObserved": true,
+  "hookAttemptsObserved": 2,
+  "singleRunAcrossAttempts": true,
   "modelCalls": 2,
   "expectedModelCalls": 2,
   "apiCostUsd": 0
@@ -60,6 +64,25 @@ The raw Gateway log also included OpenClaw's own message that
 `before_agent_finalize` requested one more pass. This is independent evidence
 that the host consumed the hook result rather than merely invoking the
 callback.
+
+## Why both hooks appear twice
+
+The raw audit sequence contains two `before_agent_run` activations and two
+`before_agent_finalize` revisions. This is one Gateway run with two model
+attempts, not two independent runs.
+
+In the installed `openclaw@2026.6.9` runtime, the embedded-agent loop consumes
+`beforeAgentFinalizeRevisionReason`, builds a revision prompt, and executes
+`continue`. The next loop iteration calls the agent harness again, whose prompt
+submission path invokes `runBeforeAgentRun` before the second model request.
+The lifecycle helper tracks the plugin retry by run id and idempotency key. The
+plugin sets `maxAttempts: 1`, so the second finalize request is normalized to
+`continue`; no third model request is made. OpenClaw also has a separate outer
+hard cap, but this proof stops at the stricter plugin budget.
+
+The proof script now asserts this relationship directly: hook activation and
+finalize counts must equal the model-request count, and every hook event must
+use the Agent RPC run id.
 
 ## `2026.6.9` run-context finding
 

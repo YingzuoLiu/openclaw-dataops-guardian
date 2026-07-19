@@ -16,6 +16,7 @@ import {
   GUARDIAN_RUN_CONTEXT_NAMESPACE,
   type GuardianRunEvidence,
   recordGuardianToolObservation,
+  resolveGuardianRequireToolsMode,
   shouldEnforceGuardianRequireTools,
 } from "./hooks/response-gate.js";
 import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot.js";
@@ -135,9 +136,12 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.on(
       "before_tool_call",
       (event, ctx) => {
+        const requireToolsMode = resolveGuardianRequireToolsMode(
+          api.pluginConfig,
+        );
         const runId = event.runId ?? ctx.runId;
         let runEvidence;
-        if (runId) {
+        if (runId && requireToolsMode !== "disabled") {
           const current = readRunEvidence(runId);
           runEvidence = recordGuardianToolObservation(current, {
             toolName: event.toolName,
@@ -151,7 +155,10 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         if (event.toolName !== "guardian_propose_remediation") {
           return;
         }
-        const runDecision = buildProposalToolGateDecision(runEvidence);
+        const runDecision =
+          requireToolsMode === "disabled"
+            ? undefined
+            : buildProposalToolGateDecision(runEvidence);
         if (runId && runDecision) {
           logGateAudit(
             buildGuardianGateAuditEvent({
@@ -184,6 +191,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.on(
       "after_tool_call",
       (event, ctx) => {
+        if (
+          resolveGuardianRequireToolsMode(api.pluginConfig) === "disabled"
+        ) {
+          return;
+        }
         const runId = event.runId ?? ctx.runId;
         if (!runId) {
           return;
@@ -203,6 +215,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.on(
       "before_agent_finalize",
       (event, ctx) => {
+        if (
+          resolveGuardianRequireToolsMode(api.pluginConfig) === "disabled"
+        ) {
+          return;
+        }
         const runId = event.runId ?? ctx.runId;
         if (!runId) {
           return;
