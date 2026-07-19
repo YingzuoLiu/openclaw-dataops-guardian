@@ -22,7 +22,7 @@ concurrency:
 jobs:
   evaluate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       GUARDIAN_AB_RUN_ID: gha-${{ github.run_id }}-${{ inputs.mode }}
       GUARDIAN_AB_MAX_COST_USD: ${{ inputs.mode == 'formal' && '1.00' || '0.25' }}

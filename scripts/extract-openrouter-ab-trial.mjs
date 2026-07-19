@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
-import { readdir, readFile, writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { resolveTrialTranscriptPath } from "./openrouter-ab-transcript.mjs";
 
 const [stateDir, rpcPath, gatewayPath, arm, summaryPath, rawPath, auditPath] =
   process.argv.slice(2);
@@ -20,19 +21,10 @@ if (
 
 const rpc = JSON.parse(await readFile(rpcPath, "utf8"));
 const sessionsDir = join(stateDir, "agents", "main", "sessions");
-const transcriptNames = (await readdir(sessionsDir)).filter(
-  (name) =>
-    name.endsWith(".jsonl") &&
-    !name.endsWith(".trajectory.jsonl") &&
-    name !== "sessions.jsonl",
+const transcriptPath = await resolveTrialTranscriptPath(
+  sessionsDir,
+  rpc.sessionKey,
 );
-if (transcriptNames.length !== 1) {
-  throw new Error(
-    `expected exactly one isolated transcript, found ${transcriptNames.length}`,
-  );
-}
-
-const transcriptPath = join(sessionsDir, transcriptNames[0]);
 const entries = (await readFile(transcriptPath, "utf8"))
   .split("\n")
   .filter(Boolean)
