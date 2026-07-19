@@ -93,7 +93,8 @@ npm run eval:openrouter:plan
 ```
 
 See [the evaluation contract](docs/openrouter-ab-evaluation.md). Paid trials
-remain opt-in and require `OPENROUTER_API_KEY` in the caller's environment.
+remain opt-in and require `OPENROUTER_API_KEY` in the caller's environment, or
+the same-named GitHub Actions repository secret for the manual workflow.
 
 ## Version contract
 

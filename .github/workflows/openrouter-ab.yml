@@ -1,0 +1,63 @@
+name: OpenRouter evidence-gate A/B
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Evaluation size
+        required: true
+        default: smoke
+        type: choice
+        options:
+          - smoke
+          - formal
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openrouter-ab-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GUARDIAN_AB_RUN_ID: gha-${{ github.run_id }}-${{ inputs.mode }}
+      GUARDIAN_AB_MAX_COST_USD: ${{ inputs.mode == 'formal' && '1.00' || '0.25' }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Use Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify deterministic checks
+        run: npm run check
+
+      - name: Run independent OpenRouter trials
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          if [[ -z "$OPENROUTER_API_KEY" ]]; then
+            echo "Repository secret OPENROUTER_API_KEY is not configured." >&2
+            exit 2
+          fi
+          bash scripts/run-openrouter-ab.sh "${{ inputs.mode }}"
+
+      - name: Upload raw evidence and report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: openrouter-ab-${{ inputs.mode }}-${{ github.run_id }}
+          path: evals/openrouter-ab/results/${{ env.GUARDIAN_AB_RUN_ID }}/
+          if-no-files-found: warn
+          retention-days: 14

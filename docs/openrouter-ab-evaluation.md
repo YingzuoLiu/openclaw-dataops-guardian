@@ -107,6 +107,20 @@ export OPENROUTER_API_KEY="your-key-in-this-shell-only"
 npm run eval:openrouter:smoke
 ```
 
+### No-CLI GitHub path
+
+The private repository also includes a manual `OpenRouter evidence-gate A/B`
+workflow. In GitHub:
+
+1. add an Actions repository secret named `OPENROUTER_API_KEY`;
+2. open **Actions → OpenRouter evidence-gate A/B → Run workflow**;
+3. keep `smoke` selected for the first run;
+4. download the `openrouter-ab-smoke-<run-id>` artifact.
+
+The workflow has no push or scheduled trigger, grants only `contents: read`,
+serializes runs to avoid accidental concurrent spend, and applies the same USD
+0.25/1.00 smoke/formal budgets as the local runner.
+
 PowerShell equivalent:
 
 ```powershell
