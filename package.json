@@ -1,6 +1,6 @@
 {
   "name": "openclaw-dataops-guardian",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "A compatibility-first OpenClaw DataOps workflow plugin.",

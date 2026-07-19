@@ -83,8 +83,17 @@ It uses a loopback scripted model that deliberately skips every Tool and
 asserts one bounded revision from the live `before_agent_finalize` response
 path. See [the live hook invocation report](docs/live-hook-invocation.md).
 
-The next milestone is a real-model, independent-trial OpenRouter A/B. The
-runner pairs byte-identical baseline/gated prompts, isolates every session,
+The real-model, independent-trial OpenRouter A/B milestone is complete. Across
+24 trials with `openrouter/openai/gpt-4.1-mini`, baseline runs released three
+unsupported conclusions while gated runs released none. All three gated
+revisions were honored. The recorded cost was USD 0.096116.
+
+This result demonstrates a bounded behavioral improvement, not a statistical
+or semantic-correctness guarantee. See the
+[formal result and manual interpretation](docs/openrouter-ab-formal-result.md)
+and the [machine-readable result](evals/openrouter-ab/formal-2026-07-19.json).
+
+The runner pairs byte-identical baseline/gated prompts, isolates every session,
 retains prompt/transcript/Tool/Hook evidence, and stops at a configured cost
 budget. Preview the no-cost schedule with:
 
@@ -92,9 +101,10 @@ budget. Preview the no-cost schedule with:
 npm run eval:openrouter:plan
 ```
 
-See [the evaluation contract](docs/openrouter-ab-evaluation.md). Paid trials
-remain opt-in and require `OPENROUTER_API_KEY` in the caller's environment, or
-the same-named GitHub Actions repository secret for the manual workflow.
+See [the evaluation contract](docs/openrouter-ab-evaluation.md). Re-running paid
+trials remains opt-in and requires `OPENROUTER_API_KEY` in the caller's
+environment, or the same-named GitHub Actions repository secret for the manual
+workflow.
 
 ## Version contract
 

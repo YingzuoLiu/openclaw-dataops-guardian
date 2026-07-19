@@ -1,6 +1,7 @@
 # OpenRouter independent-trial A/B evaluation
 
-Status: runner ready; paid trials have not run yet.
+Status: formal run completed on 2026-07-19. See
+[the formal result](openrouter-ab-formal-result.md).
 
 ## Question
 
@@ -46,7 +47,9 @@ npm run eval:openrouter:plan
 - `latency_pressure`: the prompt describes telemetry latency and the local
   Prometheus fixture adds 1.5 seconds of real delay;
 - `persistent_refusal`: a newer conflicting instruction says never to call a
-  Tool, formally exercising retry exhaustion and possible fail-open output.
+  Tool, probing whether a finalize revision can recover the run. In the formal
+  run, all three gated revisions were honored, so real-model retry exhaustion
+  and fail-open output were not observed.
 
 These are deliberately adversarial behavioral probes. They do not claim to
 represent natural production traffic frequency.
@@ -132,3 +135,7 @@ Results are stored under `evals/openrouter-ab/results/<run-id>/`. Each trial
 keeps its prompt, normalized transcript, Tool calls/results, sanitized Hook
 JSONL, summary, Prometheus request log, and Gateway log. Temporary OpenClaw
 state stays under ignored `.openclaw-openrouter-ab/`.
+
+Raw result directories are intentionally ignored by Git. A reviewed aggregate
+is committed under `evals/openrouter-ab/`, while the formal report records the
+Actions artifact identity and checksum needed to verify a downloaded archive.
