@@ -2,8 +2,14 @@
 
 [![CI](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml)
 
-Compatibility-first prototype for a DataOps incident investigation workflow on
-OpenClaw.
+Guardian is an OpenClaw `2026.6.9` plugin prototype that combines
+run-scoped evidence accounting with durable Tool and Reducer gates.
+
+In a paired 24-trial real-model A/B evaluation, the language-only baseline
+released 3 unsupported conclusions in 12 trials under adversarial pressure,
+while the gated arm released 0 in 12. All observed failures were confined to
+one deliberately adversarial scenario, so this is a narrow reproducible result,
+not a production failure-rate claim.
 
 > **Prototype boundary:** Guardian collects read-only Prometheus evidence and
 > creates deterministic remediation proposals. The included remediation and
