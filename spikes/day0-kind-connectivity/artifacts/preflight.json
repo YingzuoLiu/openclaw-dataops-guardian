@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-07-25T03:36:41.546Z",
+  "ok": false,
+  "environment": {
+    "platform": "linux",
+    "release": "6.12.13",
+    "arch": "x64",
+    "nodeVersion": "v24.14.0"
+  },
+  "docker": {
+    "available": false,
+    "exitCode": null,
+    "version": ""
+  },
+  "kind": {
+    "available": false,
+    "exitCode": null,
+    "version": ""
+  },
+  "kubectl": {
+    "available": false,
+    "exitCode": null,
+    "version": ""
+  },
+  "runtimeSockets": {
+    "/var/run/docker.sock": false,
+    "/run/docker.sock": false,
+    "/run/containerd/containerd.sock": false,
+    "/run/podman/podman.sock": false
+  },
+  "missing": [
+    "docker command",
+    "kind command",
+    "kubectl command"
+  ]
+}
