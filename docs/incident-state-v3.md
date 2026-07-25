@@ -91,6 +91,27 @@ compile-time failure instead of silently applying `new_occurrence` behavior.
 
 Step 1 deliberately does not implement that bridge.
 
+### Restart reconciliation for running attempts
+
+Schema v3 does not attach a lease or timeout to a `running` remediation attempt.
+If the process terminates after `beginRemediationAttempt` persists the attempt
+but before `finishRemediationAttempt` records its result, that attempt remains
+valid and `running` after restart. It continues to reject a different attempt
+key and causes later occurrences to return `deferred_new_occurrence`.
+
+Step 2/3 must inspect persisted running attempts during worker startup and
+reconcile their existing idempotency key and target against the external system
+before settling them. A confirmed effect is recorded as `succeeded`; confirmed
+non-execution or failure may be recorded as `failed`. An unknown external result
+must fail closed and must not be marked failed merely to unlock another
+mutation. Any held delivery remains the bridge's responsibility until
+reconciliation safely permits it to be routed.
+
+The required recovery state machine and restart proof are tracked in
+[issue #3](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues/3).
+Step 1 does not implement startup reconciliation, durable delivery holding, or
+external-effect inspection.
+
 `alertId` may change between occurrences; this is intentional because
 fingerprint and `startsAt` define occurrence routing. Within one occurrence,
 `alertId` must remain unchanged.
