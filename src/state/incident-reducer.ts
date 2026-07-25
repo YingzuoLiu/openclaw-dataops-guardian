@@ -19,17 +19,6 @@ export type AlertDelivery = {
   deliveryId: string;
 };
 
-/**
- * Why a firing delivery for the same fingerprint but a different `startsAt`
- * could not be applied to the current occurrence.
- *
- * `previous_attempt_running` obliges the caller to settle the in-flight
- * remediation attempt before routing. See docs/incident-state-v3.md.
- */
-export type NewOccurrenceReason =
-  | "previous_attempt_running"
-  | "route_to_new_occurrence";
-
 export type AlertDeliveryRejectionReason =
   | "invalid_alert_id"
   | "invalid_fingerprint"
@@ -50,9 +39,11 @@ export type AlertDeliveryRejectionReason =
  *
  * - `created` / `updated` / `duplicate` / `stale_refire`: the state the caller
  *   should persist for the current occurrence.
- * - `new_occurrence`: the *unchanged* current occurrence. It must not be
- *   overwritten with the new delivery; the caller routes that delivery to an
- *   independent occurrence instead.
+ * - `new_occurrence`: the *unchanged* current occurrence. The caller can route
+ *   the new delivery to an independent occurrence.
+ * - `deferred_new_occurrence`: the *unchanged* current occurrence with an
+ *   in-flight remediation attempt. The caller must retain the delivery until
+ *   that attempt is settled and must not route it yet.
  * - `orphan_resolved` / `rejected`: the unchanged current occurrence when one
  *   exists, otherwise `undefined`. Nothing should be persisted.
  */
@@ -65,7 +56,12 @@ export type AlertDeliveryResult =
   | {
       decision: "new_occurrence";
       state: IncidentState;
-      reason: NewOccurrenceReason;
+      reason?: never;
+    }
+  | {
+      decision: "deferred_new_occurrence";
+      state: IncidentState;
+      reason?: never;
     }
   | {
       decision: "orphan_resolved";
@@ -217,14 +213,14 @@ export function reduceAlertDelivery(
         reason: "no_matching_occurrence",
       };
     }
+    const hasRunningAttempt = state.remediationAttempts.some(
+      (attempt) => attempt.status === "running",
+    );
     return {
-      decision: "new_occurrence",
+      decision: hasRunningAttempt
+        ? "deferred_new_occurrence"
+        : "new_occurrence",
       state,
-      reason: state.remediationAttempts.some(
-        (attempt) => attempt.status === "running",
-      )
-        ? "previous_attempt_running"
-        : "route_to_new_occurrence",
     };
   }
   if (delivery.alertId !== state.alertId) {

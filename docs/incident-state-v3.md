@@ -39,54 +39,55 @@ created
 updated
 duplicate
 new_occurrence
+deferred_new_occurrence
 orphan_resolved
 stale_refire
 rejected
 ```
 
 `AlertDeliveryResult` is a discriminated union, so each decision carries only
-the fields that are meaningful for it. `new_occurrence`, `orphan_resolved`, and
-`rejected` carry a required, typed `reason`; the other decisions carry none.
+the fields that are meaningful for it. `orphan_resolved` and `rejected` carry a
+required, typed `reason`; the other decisions carry none.
 
 The meaning of the returned `state` depends on the decision. For `created`,
 `updated`, `duplicate`, and `stale_refire` it is the state to persist for the
-current occurrence. For `new_occurrence` it is the unchanged current occurrence,
-which must not be overwritten with the new delivery. For `orphan_resolved` and
-`rejected` it is the unchanged current occurrence when one exists, otherwise
-`undefined`, and nothing should be persisted.
+current occurrence. For `new_occurrence` and `deferred_new_occurrence` it is the
+unchanged current occurrence, which must not be overwritten with the new
+delivery. For `orphan_resolved` and `rejected` it is the unchanged current
+occurrence when one exists, otherwise `undefined`, and nothing should be
+persisted.
 
 A resolved delivery updates lifecycle state but does not mean remediation is
 completed. A firing delivery for an already resolved occurrence is recorded as
 `stale_refire` without reopening the occurrence.
 
-For the same fingerprint with a different `startsAt`, a firing delivery returns
-`new_occurrence`. The reducer does not overwrite or archive the current
-occurrence. Its returned `state` is the unchanged state that remains safe to
-persist in the current session. The reason is `previous_attempt_running` when
-that state has a running remediation attempt, otherwise
-`route_to_new_occurrence`.
+For the same fingerprint with a different `startsAt`, the reducer does not
+overwrite or archive the current occurrence. Its returned `state` is the
+unchanged state that remains safe to persist in the current session.
 
-The two reasons impose different obligations on the caller. Branching on
-`decision` alone is not sufficient.
-
-`route_to_new_occurrence` means the current occurrence has no in-flight
-remediation. The caller routes the delivery to an independent
+When the current occurrence has no in-flight remediation, the reducer returns
+`new_occurrence`. The caller routes the delivery to an independent
 occurrence/session and calls `reduceAlertDelivery(undefined, delivery)` to
 create its v3 state.
 
-`previous_attempt_running` means the current occurrence has a remediation
-attempt that has started and not yet finished. The caller must not create the
-new occurrence yet. It must first settle the running attempt through
+When the current occurrence has a remediation attempt that has started and not
+yet finished, the reducer returns `deferred_new_occurrence`. The caller must not
+create the new occurrence yet. It must first settle the running attempt through
 `finishRemediationAttempt` — recording the real outcome, or `failed` with an
-explicit error when the outcome cannot be established — and only then route the
-delivery. Creating the new occurrence while the attempt is running would leave
-the in-flight action untracked and would allow a second remediation to start
-under a different idempotency key.
+explicit error when the outcome cannot be established — and only then process
+the held delivery again. Creating the new occurrence while the attempt is
+running would leave the in-flight action untracked and would allow a second
+remediation to start under a different idempotency key.
 
-The delivery is not counted in any state until it is routed: `new_occurrence`
-leaves the current occurrence's counters untouched and creates nothing. A
-caller that holds the delivery back because of `previous_attempt_running` is
-therefore the only record of it, and must retain it until it can be routed.
+The delivery is not counted in any state until it is routed:
+`new_occurrence` and `deferred_new_occurrence` leave the current occurrence's
+counters untouched and create nothing. A caller that receives
+`deferred_new_occurrence` is therefore the only record of the held delivery and
+must retain it until it can be routed.
+
+Step 2 callers must handle the decision through an exhaustive switch with a
+`never` assertion. This makes an omitted `deferred_new_occurrence` branch a
+compile-time failure instead of silently applying `new_occurrence` behavior.
 
 Step 1 deliberately does not implement that bridge.
 

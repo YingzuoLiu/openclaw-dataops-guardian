@@ -4,10 +4,31 @@ import {
   MAX_RECENT_DELIVERY_IDS,
   reduceAlertDelivery,
   type AlertDelivery,
+  type AlertDeliveryResult,
 } from "./incident-reducer.js";
 import { beginRemediationAttempt } from "./incident-workflow.js";
 
 const startsAt = "2026-07-25T00:00:00.000Z";
+
+function assertNever(value: never): never {
+  throw new Error(`unhandled delivery result: ${JSON.stringify(value)}`);
+}
+
+function classifyDecision(result: AlertDeliveryResult): string {
+  switch (result.decision) {
+    case "created":
+    case "updated":
+    case "duplicate":
+    case "new_occurrence":
+    case "deferred_new_occurrence":
+    case "orphan_resolved":
+    case "stale_refire":
+    case "rejected":
+      return result.decision;
+    default:
+      return assertNever(result);
+  }
+}
 
 function delivery(
   overrides: Partial<AlertDelivery> = {},
@@ -155,8 +176,8 @@ describe("reduceAlertDelivery", () => {
     );
     expect(nextOccurrence).toMatchObject({
       decision: "new_occurrence",
-      reason: "route_to_new_occurrence",
     });
+    expect(nextOccurrence).not.toHaveProperty("reason");
     expect(nextOccurrence.state).toBe(resolved.state);
   });
 
@@ -192,9 +213,10 @@ describe("reduceAlertDelivery", () => {
     );
 
     expect(result).toMatchObject({
-      decision: "new_occurrence",
-      reason: "previous_attempt_running",
+      decision: "deferred_new_occurrence",
     });
+    expect(classifyDecision(result)).toBe("deferred_new_occurrence");
+    expect(result).not.toHaveProperty("reason");
     expect(result.state).toBe(started.state);
     expect(result.state).toEqual(before);
     expect(result.state?.remediationAttempts).toEqual(
@@ -219,8 +241,8 @@ describe("reduceAlertDelivery", () => {
 
     expect(routed).toMatchObject({
       decision: "new_occurrence",
-      reason: "route_to_new_occurrence",
     });
+    expect(routed).not.toHaveProperty("reason");
     expect(routed.state).toBe(created.state);
     expect(routed.state).toEqual(before);
 
