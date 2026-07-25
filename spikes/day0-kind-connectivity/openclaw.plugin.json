@@ -1,0 +1,28 @@
+{
+  "id": "guardian-day0-kind-connectivity",
+  "name": "Guardian Day 0 kind Connectivity Spike",
+  "description": "Disposable connectivity spike; not part of the Guardian product plugin.",
+  "contracts": {
+    "tools": [
+      "guardian_day0_kind_connectivity"
+    ]
+  },
+  "toolMetadata": {
+    "guardian_day0_kind_connectivity": {
+      "optional": false
+    }
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "kubeconfigPath": {
+        "type": "string",
+        "description": "Absolute path to the disposable, namespace-scoped Day 0 kubeconfig."
+      }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "guardian-day0-kind-connectivity-spike",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test spike-node-tests.mjs"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "1.4.0"
+  },
+  "peerDependencies": {
+    "openclaw": "2026.6.9",
+    "typebox": "1.1.39"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.mjs"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.6.9",
+      "minGatewayVersion": "2026.6.9"
+    }
+  }
+}

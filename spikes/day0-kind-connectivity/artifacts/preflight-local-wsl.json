@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "checkedAt": "2026-07-25T05:52:09.995Z",
+  "ok": true,
+  "environment": {
+    "platform": "linux",
+    "release": "6.18.33.2-microsoft-standard-WSL2",
+    "arch": "x64",
+    "nodeVersion": "v22.22.1"
+  },
+  "docker": {
+    "available": true,
+    "exitCode": 0,
+    "version": "{\"Client\":{\"Version\":\"29.6.2\",\"ApiVersion\":\"1.55\",\"DefaultAPIVersion\":\"1.55\",\"GitCommit\":\"dfc4efb\",\"GoVersion\":\"go1.26.5\",\"Os\":\"linux\",\"Arch\":\"amd64\",\"BuildTime\":\"Thu Jul 16 16:11:35 2026\",\"Context\":\"default\"},\"Server\":{\"Platform\":{\"Name\":\"Docker Desktop 4.83.0 (234302)\"},\"Version\":\"29.6.2\",\"ApiVers"
+  },
+  "kind": {
+    "available": true,
+    "exitCode": 0,
+    "version": "kind v0.32.0 go1.26.3 linux/amd64"
+  },
+  "kubectl": {
+    "available": true,
+    "exitCode": 0,
+    "version": "Client Version: v1.36.1\nKustomize Version: v5.8.1"
+  },
+  "runtimeSockets": {
+    "/var/run/docker.sock": true,
+    "/run/docker.sock": true,
+    "/run/containerd/containerd.sock": false,
+    "/run/podman/podman.sock": false
+  },
+  "missing": []
+}
