@@ -6,6 +6,7 @@ import {
 import {
   INCIDENT_STATE_NAMESPACE,
   projectIncidentState,
+  readIncidentStateV3,
 } from "./state/incident-state.js";
 import { evaluateIncidentEvidence } from "./policy/evidence-policy.js";
 import {
@@ -173,8 +174,15 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
         const incident = ctx.getSessionExtension?.(INCIDENT_STATE_NAMESPACE);
         if (incident !== undefined) {
+          const decoded = readIncidentStateV3(incident);
+          if (!decoded.ok) {
+            return {
+              block: true,
+              blockReason: `remediation proposal cannot read incident state: ${decoded.error}`,
+            };
+          }
           const validation = evaluateIncidentEvidence(
-            incident,
+            decoded.state,
             new Date().toISOString(),
           );
           if (!validation.ok) {

@@ -22,7 +22,7 @@ requesting approval. The default policy requires:
 - a valid observation timestamp no more than five minutes old;
 - no observation more than 30 seconds in the future.
 
-Failure is represented in schema-version-2 incident state:
+Failure is represented in schema-version-3 incident state:
 
 ```json
 {
@@ -122,12 +122,19 @@ isolated profile, applies the setting, runs runtime inspection, and asserts:
 }
 ```
 
-## Recovery retry cap
+## Remediation attempt cap
 
-`MAX_REMEDIATION_RETRIES` is two. Failed recovery checks increment
-`retryCount`; failures one and two return to `remediation`, while failure three
-moves the incident to `blocked`. Invalid negative or fractional overrides are
-rejected.
+`MAX_REMEDIATION_RETRIES` remains two, so
+`MAX_REMEDIATION_ATTEMPTS = MAX_REMEDIATION_RETRIES + 1` allows at most three
+persisted attempts. `remediationAttempts.length` is the only remediation budget
+counter. There is no separate `retryCount`.
+
+Each attempt has an opaque caller-provided idempotency key, a JSON-compatible
+target, timestamps, and a running/succeeded/failed result. Reusing a key with
+the same target is a duplicate; reusing it with a different target is an
+idempotency conflict. Execution failure and application recovery failure both
+return to `remediation` only while another attempt remains available. Otherwise
+the incident becomes `blocked`.
 
 This prototype does not yet add custom OTel hook telemetry. OpenClaw's built-in
 telemetry/export path remains the intended observability seam; Guardian-specific
