@@ -68,6 +68,32 @@ function createPluginHarness(options?: {
 }
 
 describe("DataOps Guardian plugin hook wiring", () => {
+  it("rejects unsupported incident schemas at the Tool boundary", async () => {
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+    });
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-schema-v2",
+        toolName: "guardian_propose_remediation",
+      },
+      {
+        runId: "run-schema-v2",
+        getSessionExtension: () => ({
+          schemaVersion: 2,
+          alertId: "legacy-alert",
+        }),
+      },
+    );
+
+    expect(decision).toEqual({
+      block: true,
+      blockReason:
+        "remediation proposal cannot read incident state: unsupported_schema",
+    });
+  });
+
   it("activates require_tools before a dedicated Agent run starts", async () => {
     const { hooks, logs } = createPluginHarness({
       enforceRequireToolsOnAgentRuns: true,

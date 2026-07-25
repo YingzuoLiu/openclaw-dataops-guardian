@@ -45,6 +45,12 @@ entry retains the exact PromQL as its source:
 3. `lobster_remediation`;
 4. `lobster_recovery_check`.
 
+`start` creates the schema-v3 incident by passing one synthetic firing delivery
+through the same occurrence reducer used by future ingestion callers. There is
+no separate `openIncident()` constructor. The approved path persists a running
+synthetic remediation attempt before resuming Lobster, then records its
+succeeded result before recovery validation.
+
 ## Denied path
 
 The same alert was run in a separate session and resumed with `deny`:
@@ -76,8 +82,9 @@ approval as `cancelled`, while Guardian records the business state as `blocked`.
 - Lobster owns the deterministic approval, remediation, and recovery sequence.
 - The embedded workflow does not call back into OpenClaw tools.
 - All remediation in this slice is marked `mutatesProduction: false`.
-- An unhealthy recovery check can retry remediation at most twice; the third
-  failed check moves the incident to `blocked`.
+- Remediation history is bounded to three attempts. Execution failures and
+  unhealthy recovery checks return to `remediation` only while fewer than three
+  attempts have been persisted.
 
 This uses only public OpenClaw seams. It does not import the host's private
 session-store implementation.
@@ -109,3 +116,7 @@ The policy proof opts this non-bundled plugin into conversation hooks through
 `plugins.entries.dataops-guardian.hooks.allowConversationAccess=true`. OpenClaw
 otherwise rejects `before_agent_run` and `before_agent_finalize` and reports a
 loader diagnostic.
+
+The separate `npm run state:v3:restart-proof` fixture patches a complete v3
+state containing delivery-window counters and three remediation attempts,
+restarts the Gateway, and verifies a deep-equal read-back.

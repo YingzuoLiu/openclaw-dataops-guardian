@@ -3,13 +3,15 @@ import { readFile, writeFile } from "node:fs/promises";
 import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 
 import {
-  openIncident,
+  beginRemediationAttempt,
+  finishRemediationAttempt,
   recordApprovalDecision,
   recordMetricEvidence,
   recordRecoveryCheck,
-  recordRemediationExecution,
   recordRemediationProposal,
 } from "../dist/state/incident-workflow.js";
+import { reduceAlertDelivery } from "../dist/state/incident-reducer.js";
+import { readIncidentStateV3 } from "../dist/state/incident-state.js";
 
 const PLUGIN_ID = "dataops-guardian";
 const NAMESPACE = "incident";
@@ -84,7 +86,13 @@ async function readState() {
   if (!projection?.value) {
     throw new Error(`incident state is missing for ${SESSION_KEY}`);
   }
-  return projection.value;
+  const decoded = readIncidentStateV3(projection.value);
+  if (!decoded.ok) {
+    throw new Error(
+      `incident state decode failed for ${SESSION_KEY}: ${decoded.error}: ${decoded.issues.join("; ")}`,
+    );
+  }
+  return decoded.state;
 }
 
 async function invokeTool(name, args) {
@@ -123,10 +131,21 @@ async function startSlice() {
     currentValue: prometheus.currentValue,
   };
 
-  let state = openIncident({
+  const delivery = reduceAlertDelivery(undefined, {
     alertId: alert.alertId,
-    occurredAt: prometheus.observedAt,
+    fingerprint: "vertical-slice-payment-success-rate-drop",
+    alertStatus: "firing",
+    startsAt: prometheus.observedAt,
+    endsAt: null,
+    receivedAt: prometheus.observedAt,
+    deliveryId: `vertical-slice-firing:${prometheus.observedAt}`,
   });
+  if (delivery.decision !== "created" || !delivery.state) {
+    throw new Error(
+      `synthetic firing delivery did not create an incident: ${JSON.stringify(delivery)}`,
+    );
+  }
+  let state = delivery.state;
   await patchState(state);
 
   const metricResult = await invokeTool(
@@ -174,6 +193,12 @@ async function startSlice() {
         alert,
         proposal,
         resumeToken,
+        idempotencyKey: `vertical-slice:${state.occurrenceId}:attempt-1`,
+        remediationTarget: {
+          kind: "synthetic",
+          alertId: state.alertId,
+          action: state.proposedAction,
+        },
       },
       null,
       2,
@@ -203,6 +228,21 @@ async function resumeSlice() {
   state = recordApprovalDecision(state, approved, now());
   await patchState(state);
 
+  if (approved) {
+    const started = beginRemediationAttempt(state, {
+      idempotencyKey: record.idempotencyKey,
+      target: record.remediationTarget,
+      startedAt: now(),
+    });
+    if (started.decision !== "started") {
+      throw new Error(
+        `synthetic remediation attempt did not start: ${started.decision}`,
+      );
+    }
+    state = started.state;
+    await patchState(state);
+  }
+
   const lobster = await invokeTool("lobster", {
     action: "resume",
     token: record.resumeToken,
@@ -213,15 +253,33 @@ async function resumeSlice() {
 
   const expectedWorkflowStatus = approved ? "ok" : "cancelled";
   if (lobster?.status !== expectedWorkflowStatus) {
+    if (approved) {
+      const failed = finishRemediationAttempt(state, {
+        idempotencyKey: record.idempotencyKey,
+        status: "failed",
+        finishedAt: now(),
+        error: `Lobster returned unexpected status: ${String(lobster?.status)}`,
+      });
+      if (failed.decision === "recorded") {
+        await patchState(failed.state);
+      }
+    }
     throw new Error(`Lobster resume failed: ${JSON.stringify(lobster)}`);
   }
 
   if (approved) {
-    state = recordRemediationExecution(
-      state,
-      `Synthetic remediation ${state.proposedAction} executed successfully.`,
-      now(),
-    );
+    const finished = finishRemediationAttempt(state, {
+      idempotencyKey: record.idempotencyKey,
+      status: "succeeded",
+      finishedAt: now(),
+      error: null,
+    });
+    if (finished.decision !== "recorded") {
+      throw new Error(
+        `synthetic remediation result was not recorded: ${finished.decision}`,
+      );
+    }
+    state = finished.state;
     await patchState(state);
 
     state = recordRecoveryCheck(state, {
