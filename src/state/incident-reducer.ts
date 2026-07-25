@@ -19,20 +19,66 @@ export type AlertDelivery = {
   deliveryId: string;
 };
 
-export type AlertDeliveryDecision =
-  | "created"
-  | "updated"
-  | "duplicate"
-  | "new_occurrence"
-  | "orphan_resolved"
-  | "stale_refire"
-  | "rejected";
+/**
+ * Why a firing delivery for the same fingerprint but a different `startsAt`
+ * could not be applied to the current occurrence.
+ *
+ * `previous_attempt_running` obliges the caller to settle the in-flight
+ * remediation attempt before routing. See docs/incident-state-v3.md.
+ */
+export type NewOccurrenceReason =
+  | "previous_attempt_running"
+  | "route_to_new_occurrence";
 
-export type AlertDeliveryResult = {
-  decision: AlertDeliveryDecision;
-  state: IncidentState | undefined;
-  reason?: string;
-};
+export type AlertDeliveryRejectionReason =
+  | "invalid_alert_id"
+  | "invalid_fingerprint"
+  | "invalid_delivery_id"
+  | "invalid_alert_status"
+  | "invalid_timestamp"
+  | "received_before_start"
+  | "firing_with_ends_at"
+  | "invalid_resolved_ends_at"
+  | "unsupported_schema"
+  | "invalid_state"
+  | "fingerprint_mismatch"
+  | "alert_id_mismatch"
+  | "received_at_regression";
+
+/**
+ * The meaning of `state` depends on `decision`:
+ *
+ * - `created` / `updated` / `duplicate` / `stale_refire`: the state the caller
+ *   should persist for the current occurrence.
+ * - `new_occurrence`: the *unchanged* current occurrence. It must not be
+ *   overwritten with the new delivery; the caller routes that delivery to an
+ *   independent occurrence instead.
+ * - `orphan_resolved` / `rejected`: the unchanged current occurrence when one
+ *   exists, otherwise `undefined`. Nothing should be persisted.
+ */
+export type AlertDeliveryResult =
+  | {
+      decision: "created" | "updated" | "duplicate" | "stale_refire";
+      state: IncidentState;
+      reason?: never;
+    }
+  | {
+      decision: "new_occurrence";
+      state: IncidentState;
+      reason: NewOccurrenceReason;
+    }
+  | {
+      decision: "orphan_resolved";
+      state: IncidentState | undefined;
+      reason: "no_matching_occurrence";
+    }
+  | {
+      decision: "rejected";
+      state: IncidentState | undefined;
+      reason: AlertDeliveryRejectionReason;
+    };
+
+export type AlertDeliveryDecision = AlertDeliveryResult["decision"];
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -46,7 +92,9 @@ function timestampMs(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function validateDelivery(delivery: AlertDelivery): string | undefined {
+function validateDelivery(
+  delivery: AlertDelivery,
+): AlertDeliveryRejectionReason | undefined {
   if (!isNonEmptyString(delivery.alertId)) {
     return "invalid_alert_id";
   }
@@ -135,17 +183,17 @@ export function reduceAlertDelivery(
   }
 
   const decoded = readIncidentStateV3(current);
-  if (!decoded.ok && decoded.error === "missing_state") {
-    if (delivery.alertStatus === "resolved") {
-      return {
-        decision: "orphan_resolved",
-        state: undefined,
-        reason: "no_matching_occurrence",
-      };
-    }
-    return { decision: "created", state: createIncident(delivery) };
-  }
   if (!decoded.ok) {
+    if (decoded.error === "missing_state") {
+      if (delivery.alertStatus === "resolved") {
+        return {
+          decision: "orphan_resolved",
+          state: undefined,
+          reason: "no_matching_occurrence",
+        };
+      }
+      return { decision: "created", state: createIncident(delivery) };
+    }
     return {
       decision: "rejected",
       state: undefined,
