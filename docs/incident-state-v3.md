@@ -29,6 +29,8 @@ sha256("incident-occurrence-v1\0" + fingerprint + "\0" + startsAt)
 
 The alert reducer accepts a non-empty opaque `deliveryId` from its caller. It
 does not parse Alertmanager payloads or define payload canonicalization.
+`receivedAt` is the receiver or bridge's ingress time. It must not be copied
+from an Alertmanager payload timestamp.
 
 The reducer reports one of:
 
@@ -45,6 +47,21 @@ rejected
 A resolved delivery updates lifecycle state but does not mean remediation is
 completed. A firing delivery for an already resolved occurrence is recorded as
 `stale_refire` without reopening the occurrence.
+
+For the same fingerprint with a different `startsAt`, a firing delivery returns
+`new_occurrence`. The reducer does not overwrite or archive the current
+occurrence. Its returned `state` is the unchanged state that remains safe to
+persist in the current session. The reason is `previous_attempt_running` when
+that state has a running remediation attempt, otherwise
+`route_to_new_occurrence`.
+
+The future Alertmanager bridge must route that delivery to an independent
+occurrence/session and then call `reduceAlertDelivery(undefined, delivery)` to
+create its v3 state. Step 1 deliberately does not implement that bridge.
+
+`alertId` may change between occurrences; this is intentional because
+fingerprint and `startsAt` define occurrence routing. Within one occurrence,
+`alertId` must remain unchanged.
 
 ## Delivery window
 

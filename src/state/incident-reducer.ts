@@ -171,7 +171,12 @@ export function reduceAlertDelivery(
     }
     return {
       decision: "new_occurrence",
-      state: createIncident(delivery),
+      state,
+      reason: state.remediationAttempts.some(
+        (attempt) => attempt.status === "running",
+      )
+        ? "previous_attempt_running"
+        : "route_to_new_occurrence",
     };
   }
   if (delivery.alertId !== state.alertId) {

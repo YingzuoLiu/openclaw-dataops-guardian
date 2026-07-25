@@ -5,6 +5,7 @@ import {
   reduceAlertDelivery,
   type AlertDelivery,
 } from "./incident-reducer.js";
+import { beginRemediationAttempt } from "./incident-workflow.js";
 
 const startsAt = "2026-07-25T00:00:00.000Z";
 
@@ -154,11 +155,87 @@ describe("reduceAlertDelivery", () => {
     );
     expect(nextOccurrence).toMatchObject({
       decision: "new_occurrence",
-      state: {
+      reason: "route_to_new_occurrence",
+    });
+    expect(nextOccurrence.state).toBe(resolved.state);
+  });
+
+  it("preserves a running remediation occurrence when a new firing occurrence arrives", () => {
+    const created = reduceAlertDelivery(undefined, delivery());
+    if (!created.state) {
+      throw new Error("fixture incident was not created");
+    }
+    const remediationState = {
+      ...created.state,
+      stage: "remediation" as const,
+      approvalStatus: "approved" as const,
+      proposedAction: "rollback_latest_release",
+    };
+    const started = beginRemediationAttempt(remediationState, {
+      idempotencyKey: "attempt-1",
+      target: { kind: "synthetic" },
+      startedAt: startsAt,
+    });
+    if (started.decision !== "started") {
+      throw new Error("fixture remediation attempt was not started");
+    }
+    const before = structuredClone(started.state);
+
+    const result = reduceAlertDelivery(
+      started.state,
+      delivery({
+        alertId: "payment-success-rate-drop-v2",
         startsAt: "2026-07-25T01:00:00.000Z",
-        deliveryCount: 1,
+        receivedAt: "2026-07-25T01:00:01.000Z",
+        deliveryId: "next-occurrence-delivery",
+      }),
+    );
+
+    expect(result).toMatchObject({
+      decision: "new_occurrence",
+      reason: "previous_attempt_running",
+    });
+    expect(result.state).toBe(started.state);
+    expect(result.state).toEqual(before);
+    expect(result.state?.remediationAttempts).toEqual(
+      started.state.remediationAttempts,
+    );
+  });
+
+  it("routes a new firing occurrence without replacing the old state", () => {
+    const created = reduceAlertDelivery(undefined, delivery());
+    if (!created.state) {
+      throw new Error("fixture incident was not created");
+    }
+    const before = structuredClone(created.state);
+    const nextDelivery = delivery({
+      alertId: "renamed-payment-alert",
+      startsAt: "2026-07-25T01:00:00.000Z",
+      receivedAt: "2026-07-25T01:00:05.000Z",
+      deliveryId: "next-occurrence-delivery",
+    });
+
+    const routed = reduceAlertDelivery(created.state, nextDelivery);
+
+    expect(routed).toMatchObject({
+      decision: "new_occurrence",
+      reason: "route_to_new_occurrence",
+    });
+    expect(routed.state).toBe(created.state);
+    expect(routed.state).toEqual(before);
+
+    const newOccurrence = reduceAlertDelivery(undefined, nextDelivery);
+    expect(newOccurrence).toMatchObject({
+      decision: "created",
+      state: {
+        alertId: "renamed-payment-alert",
+        startsAt: "2026-07-25T01:00:00.000Z",
+        remediationAttempts: [],
       },
     });
+    expect(newOccurrence.state?.occurrenceId).not.toBe(
+      created.state.occurrenceId,
+    );
   });
 
   it("rejects invalid delivery input and unsupported stored schemas", () => {
