@@ -24,6 +24,16 @@ import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot
 import { createProposeRemediationTool } from "./tools/propose-remediation.js";
 import { createQueryPrometheusTool } from "./tools/query-prometheus.js";
 
+export {
+  isRestartReconciliationManualReview,
+  reconcileIncidentOnRestart,
+  type DeferredDeliveryRecovery,
+  type ExternalReconciliationOutcome,
+  type ExternalReconciliationRequest,
+  type ExternalRemediationReconciler,
+  type RestartReconciliationResult,
+} from "./state/restart-reconciliation.js";
+
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "dataops-guardian",
   name: "DataOps Guardian",

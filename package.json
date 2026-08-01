@@ -32,7 +32,8 @@
     "slice:rpc": "node scripts/vertical-slice-rpc.mjs",
     "slice:proof": "bash scripts/run-vertical-slice-proof.sh",
     "state:v3:rpc": "node scripts/incident-state-v3-rpc.mjs",
-    "state:v3:restart-proof": "bash scripts/run-incident-state-v3-restart-proof.sh"
+    "state:v3:restart-proof": "bash scripts/run-incident-state-v3-restart-proof.sh",
+    "state:restart-reconciliation-proof": "bash scripts/run-restart-reconciliation-proof.sh"
   },
   "dependencies": {
     "@openclaw/lobster": "2026.6.9",

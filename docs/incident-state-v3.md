@@ -73,11 +73,12 @@ create its v3 state.
 When the current occurrence has a remediation attempt that has started and not
 yet finished, the reducer returns `deferred_new_occurrence`. The caller must not
 create the new occurrence yet. It must first settle the running attempt through
-`finishRemediationAttempt` — recording the real outcome, or `failed` with an
-explicit error when the outcome cannot be established — and only then process
-the held delivery again. Creating the new occurrence while the attempt is
-running would leave the in-flight action untracked and would allow a second
-remediation to start under a different idempotency key.
+`finishRemediationAttempt` during uninterrupted execution, or through restart
+reconciliation after a process interruption, and only then process the held
+delivery again. An outcome that cannot be established must not be recorded as
+`failed`. Creating the new occurrence while the attempt is running would leave
+the in-flight action untracked and would allow a second remediation to start
+under a different idempotency key.
 
 The delivery is not counted in any state until it is routed:
 `new_occurrence` and `deferred_new_occurrence` leave the current occurrence's
@@ -99,18 +100,63 @@ but before `finishRemediationAttempt` records its result, that attempt remains
 valid and `running` after restart. It continues to reject a different attempt
 key and causes later occurrences to return `deferred_new_occurrence`.
 
-Step 2/3 must inspect persisted running attempts during worker startup and
-reconcile their existing idempotency key and target against the external system
-before settling them. A confirmed effect is recorded as `succeeded`; confirmed
-non-execution or failure may be recorded as `failed`. An unknown external result
-must fail closed and must not be marked failed merely to unlock another
-mutation. Any held delivery remains the bridge's responsibility until
-reconciliation safely permits it to be routed.
+`ExternalRemediationReconciler` is the boundary between the state machine and a
+future target-specific audit implementation. It receives the persisted attempt's
+existing `idempotencyKey`, `target`, and `startedAt`. It can return only:
 
-The required recovery state machine and restart proof are tracked in
-[issue #3](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues/3).
-Step 1 does not implement startup reconciliation, durable delivery holding, or
-external-effect inspection.
+```text
+confirmed_succeeded
+confirmed_failed
+unknown
+```
+
+The reconciliation coordinator never dispatches a mutation. It only inspects
+and settles the already persisted attempt. A thrown reconciler error leaves the
+persisted state untouched. A malformed reconciler result is normalized to
+`unknown` and therefore cannot unlock a mutation.
+
+The precise startup state machine is:
+
+| Persisted state / external result | Attempt after reconciliation | Incident stage | Deferred delivery | New mutation allowed |
+|---|---|---|---|---|
+| no running attempt | unchanged | unchanged | replay through the reducer, if present | governed by the ordinary workflow |
+| running + `confirmed_succeeded` | same key/target → `succeeded` | `recovery_check` | replay through the reducer | no; recovery must run first |
+| running + `confirmed_failed`, budget remains | same key/target → `failed` | `remediation` | replay through the reducer | yes, because failure/non-execution is confirmed |
+| running + `confirmed_failed`, budget exhausted | same key/target → `failed` | `blocked` | replay through the reducer | no |
+| running + `unknown` | remains `running` | `blocked` | retained unchanged by the bridge checkpoint | no |
+
+The fail-closed manual-review representation deliberately adds no speculative
+schema field. It is the validated combination:
+
+```text
+stage = blocked
+approvalStatus = approved
+exactly one remediation attempt has status = running
+```
+
+Reconciliation appends evidence with source
+`guardian_restart_reconciliation`. The unfinished attempt continues to make
+`beginRemediationAttempt` return `running_attempt_exists`, and the reducer
+continues to return `deferred_new_occurrence`. A later startup may inspect the
+same key and target again; only a conclusive result can settle it. There is no
+lease, timeout, or automatic retry.
+
+The deferred delivery is not added to `IncidentState`. It belongs to a durable,
+bridge-owned checkpoint alongside the incident state. On `unknown`, the
+coordinator returns the exact delivery as `held`. After a confirmed settlement,
+or when startup finds that the attempt was already settled, it calls
+`reduceAlertDelivery` again and returns the delivery plus its `replayed` result.
+The bridge can then exhaustively route `new_occurrence`; the current occurrence
+is never overwritten. Replay is an at-least-once handoff: the bridge must keep
+the checkpoint until the deterministic destination occurrence has durably
+accepted the delivery, then atomically mark or remove that checkpoint. If the
+bridge restarts before that acknowledgement, it replays the same `deliveryId`
+to the same occurrence so the existing delivery deduplication handles the
+repeat. The coordinator itself never silently consumes the held delivery.
+
+This contract does not implement an Alertmanager receiver, Kubernetes access,
+or rollback execution. A future external adapter must provide the target-specific
+read/audit operation behind `ExternalRemediationReconciler`.
 
 `alertId` may change between occurrences; this is intentional because
 fingerprint and `startsAt` define occurrence routing. Within one occurrence,
@@ -181,4 +227,12 @@ Run the unit and persistence checks with:
 ```bash
 npm run check
 npm run state:v3:restart-proof
+npm run state:restart-reconciliation-proof
 ```
+
+The restart-reconciliation proof uses two processes and two durable fixtures.
+The first process persists a running attempt and held delivery, dispatches one
+synthetic external mutation, and is terminated with `SIGKILL` before result
+persistence. The second process reads the checkpoint, confirms the effect from
+the separate external audit, settles the original key, replays the held
+delivery, and asserts that the mutation dispatch count remains one.

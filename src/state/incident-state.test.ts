@@ -150,6 +150,17 @@ describe("readIncidentStateV3", () => {
       error: "invalid_state",
     });
 
+    const manualReview = {
+      ...validState(),
+      stage: "blocked" as const,
+      approvalStatus: "approved" as const,
+      remediationAttempts: [runningAttempt],
+    };
+    expect(readIncidentStateV3(manualReview)).toEqual({
+      ok: true,
+      state: manualReview,
+    });
+
     const duplicateKeys = {
       ...validState(),
       remediationAttempts: [
