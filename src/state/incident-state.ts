@@ -436,10 +436,11 @@ export function readIncidentStateV3(
   }
   if (
     runningAttemptCount === 1 &&
-    (value.approvalStatus !== "approved" || value.stage !== "remediation")
+    (value.approvalStatus !== "approved" ||
+      !new Set(["remediation", "blocked"]).has(value.stage as string))
   ) {
     issues.push(
-      "a running remediation attempt requires approved remediation stage",
+      "a running remediation attempt requires approved remediation or blocked stage",
     );
   }
 
