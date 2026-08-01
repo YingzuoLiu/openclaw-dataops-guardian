@@ -23,6 +23,8 @@ and supported-version policy are documented in [SECURITY.md](SECURITY.md).
 
 - native OpenClaw session-extension incident state that survives Gateway
   restart;
+- deterministic Alertmanager v4 payload canonicalization, bounded delivery
+  deduplication, and fail-closed deferred-delivery planning;
 - a read-only Prometheus Tool whose endpoint remains administrator-owned;
 - durable Reducer, Tool-call, and bounded response gates for evidence-backed
   remediation proposals;
@@ -72,7 +74,7 @@ Both approve (`completed`) and deny (`blocked`) paths persist through the native
 session extension. The approval token also survives a Gateway restart. See
 [the vertical slice report](docs/vertical-slice.md).
 
-The incident state is now schema version 2. A proposal can enter `approval`
+The incident state is now schema version 3. A proposal can enter `approval`
 only after fresh Prometheus evidence passes the Reducer policy. The plugin also
 registers `before_agent_run`, `before_tool_call`, `after_tool_call`,
 `before_agent_finalize`, and the `agent_end` cleanup hook. In an explicitly
@@ -86,6 +88,11 @@ and Reducer gates continue to prevent unsupported proposals and approval. See
 The Prometheus endpoint is administrator configuration, not a Tool argument.
 The Agent supplies only PromQL, and Guardian requires the query to return
 exactly one finite sample. See [the adapter contract](docs/prometheus-adapter.md).
+
+Alertmanager webhook v4 canonicalization is implemented as a pure ingestion
+boundary. Webhook content can trigger incident routing but never counts as
+evidence, and this milestone does not yet expose an HTTP receiver. See the
+[Alertmanager ingestion contract](docs/alertmanager-ingestion.md).
 
 Run the isolated approved-path proof with:
 

@@ -90,7 +90,10 @@ Step 2 callers must handle the decision through an exhaustive switch with a
 `never` assertion. This makes an omitted `deferred_new_occurrence` branch a
 compile-time failure instead of silently applying `new_occurrence` behavior.
 
-Step 1 deliberately does not implement that bridge.
+The follow-on Alertmanager ingestion boundary now implements the exhaustive
+decision planner and deterministic held-delivery checkpoint shape. Durable
+checkpoint storage, HTTP acknowledgement, and session/RPC routing remain the
+responsibility of a future external bridge. See `docs/alertmanager-ingestion.md`.
 
 ### Restart reconciliation for running attempts
 
