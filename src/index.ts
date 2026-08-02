@@ -34,6 +34,21 @@ export {
   type RestartReconciliationResult,
 } from "./state/restart-reconciliation.js";
 
+export {
+  ALERTMANAGER_WEBHOOK_VERSION,
+  canonicalizeAlertmanagerWebhook,
+  DEFERRED_ALERT_DELIVERY_CHECKPOINT_VERSION,
+  planAlertDeliveryIngestion,
+  type AlertDeliveryIngestionPlan,
+  type AlertmanagerAlertRejectionReason,
+  type AlertmanagerEnvelopeRejectionReason,
+  type AlertmanagerWebhookCanonicalizationResult,
+  type AlertmanagerWebhookMetadata,
+  type CanonicalAlertmanagerAlert,
+  type DeferredAlertDeliveryCheckpoint,
+  type RejectedAlertmanagerAlert,
+} from "./alertmanager/ingestion.js";
+
 const plugin: OpenClawPluginDefinition = definePluginEntry({
   id: "dataops-guardian",
   name: "DataOps Guardian",
