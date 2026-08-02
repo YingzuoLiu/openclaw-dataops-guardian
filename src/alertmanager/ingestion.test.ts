@@ -204,6 +204,102 @@ describe("canonicalizeAlertmanagerWebhook", () => {
   });
 });
 
+describe("delivery identity stability", () => {
+  it("keeps the same delivery ID for the same firing occurrence when only annotations change", () => {
+    const first = canonicalDelivery();
+    const second = canonicalDelivery(
+      webhook({
+        alerts: [
+          webhookAlert({
+            annotations: {
+              description: "Payment success rate dropped further.",
+              summary: "Payments are now critically unhealthy.",
+              currentValue: "12%",
+            },
+          }),
+        ],
+      }),
+      "2026-08-01T00:05:00.000Z",
+    );
+
+    expect(second.deliveryId).toBe(first.deliveryId);
+  });
+
+  it("keeps the same delivery ID for the same firing occurrence when generatorURL changes", () => {
+    const first = canonicalDelivery();
+    const second = canonicalDelivery(
+      webhook({
+        alerts: [
+          webhookAlert({
+            generatorURL:
+              "http://prometheus.example/graph?g0.expr=payment_success_rate&g0.tab=1&t=1754006700",
+          }),
+        ],
+      }),
+      "2026-08-01T00:05:00.000Z",
+    );
+
+    expect(second.deliveryId).toBe(first.deliveryId);
+  });
+
+  it("keeps the same delivery ID when labels, annotations, and generatorURL all change together", () => {
+    const first = canonicalDelivery();
+    const second = canonicalDelivery(
+      webhook({
+        alerts: [
+          webhookAlert({
+            labels: {
+              alertname: "PaymentSuccessRateLow",
+              deployment: "payments",
+              namespace: "guardian-demo",
+              extra_label: "added-on-repeat",
+            },
+            annotations: { summary: "Different summary entirely." },
+            generatorURL: "http://prometheus.example/graph?g0.expr=other",
+          }),
+        ],
+      }),
+      "2026-08-01T00:09:00.000Z",
+    );
+
+    expect(second.deliveryId).toBe(first.deliveryId);
+  });
+
+  it("does not deduplicate a resolved delivery against its own firing delivery", () => {
+    const firing = canonicalDelivery();
+    const resolved = canonicalDelivery(
+      webhook({
+        status: "resolved",
+        alerts: [
+          webhookAlert({
+            status: "resolved",
+            endsAt: "2026-08-01T00:05:00.000Z",
+          }),
+        ],
+      }),
+      "2026-08-01T00:05:30.000Z",
+    );
+
+    expect(resolved.deliveryId).not.toBe(firing.deliveryId);
+  });
+
+  it("does not deduplicate a new occurrence sharing the same fingerprint but a different startsAt", () => {
+    const first = canonicalDelivery();
+    const nextOccurrence = canonicalDelivery(
+      webhook({
+        alerts: [
+          webhookAlert({
+            startsAt: "2026-08-01T02:00:00.000Z",
+          }),
+        ],
+      }),
+      "2026-08-01T02:00:05.000Z",
+    );
+
+    expect(nextOccurrence.deliveryId).not.toBe(first.deliveryId);
+  });
+});
+
 describe("planAlertDeliveryIngestion", () => {
   it("persists firing and resolved lifecycle without treating webhook data as evidence", () => {
     const firing = planAlertDeliveryIngestion(

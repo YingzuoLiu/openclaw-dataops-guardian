@@ -6,7 +6,13 @@ import {
   type AlertDelivery,
   type AlertDeliveryResult,
 } from "./incident-reducer.js";
-import { beginRemediationAttempt } from "./incident-workflow.js";
+import { readIncidentStateV3 } from "./incident-state.js";
+import {
+  beginRemediationAttempt,
+  recordApprovalDecision,
+  recordMetricEvidence,
+  recordRemediationProposal,
+} from "./incident-workflow.js";
 
 const startsAt = "2026-07-25T00:00:00.000Z";
 
@@ -272,6 +278,191 @@ describe("reduceAlertDelivery", () => {
     ).toMatchObject({
       decision: "rejected",
       reason: "unsupported_schema",
+    });
+  });
+
+  describe("updatedAt stays monotonic under late-but-valid deliveries", () => {
+    function incidentWithRunningRemediation() {
+      const created = reduceAlertDelivery(
+        undefined,
+        delivery({ receivedAt: "2026-08-01T00:00:05.000Z" }),
+      );
+      if (created.decision !== "created") {
+        throw new Error("fixture incident was not created");
+      }
+      const withEvidence = recordMetricEvidence(
+        created.state,
+        {
+          alertId: delivery().alertId,
+          metric: "payment_success_rate",
+          currentValue: 42,
+          baselineValue: 99,
+          relativeChange: -0.57,
+          classification: "critical",
+          source: "prometheus:payment_success_rate",
+          evidenceSummary: "healthy sample",
+        },
+        "2026-08-01T00:03:00.000Z",
+      );
+      const withProposal = recordRemediationProposal(
+        withEvidence,
+        {
+          alertId: delivery().alertId,
+          action: "rollback_deployment",
+          rationale: "evidence-backed rollback",
+          risk: "low",
+        },
+        "2026-08-01T00:04:00.000Z",
+      );
+      if (withProposal.evidenceValidation.status !== "passed") {
+        throw new Error(
+          `fixture evidence validation did not pass: ${JSON.stringify(withProposal.evidenceValidation)}`,
+        );
+      }
+      const approved = recordApprovalDecision(
+        withProposal,
+        true,
+        "2026-08-01T00:04:30.000Z",
+      );
+      const running = beginRemediationAttempt(approved, {
+        idempotencyKey: "mutation-key-1",
+        target: { namespace: "guardian-demo", deployment: "payments" },
+        startedAt: "2026-08-01T00:05:00.000Z",
+      });
+      if (running.decision !== "started") {
+        throw new Error("fixture remediation attempt was not started");
+      }
+      return running.state;
+    }
+
+    it("does not regress updatedAt when a duplicate delivery replays after remediation began", () => {
+      const runningState = incidentWithRunningRemediation();
+      // An Alertmanager retry (or an HA-replica duplicate) of the delivery that created this
+      // incident, arriving a few seconds after ingestion but long after remediation started.
+      const retriedOriginal = delivery({
+        receivedAt: "2026-08-01T00:00:07.000Z",
+      });
+
+      const result = reduceAlertDelivery(runningState, retriedOriginal);
+
+      expect(result).toMatchObject({
+        decision: "duplicate",
+        state: {
+          // lastReceivedAt still reflects delivery-ingestion order.
+          lastReceivedAt: "2026-08-01T00:00:07.000Z",
+          // updatedAt must not regress behind the running attempt's startedAt.
+          updatedAt: "2026-08-01T00:05:00.000Z",
+        },
+      });
+      expect(result.state?.updatedAt).toBe(runningState.updatedAt);
+      expect(readIncidentStateV3(result.state)).toMatchObject({ ok: true });
+
+      const nextDelivery = delivery({
+        deliveryId: "delivery-legit-followup",
+        receivedAt: "2026-08-01T00:06:00.000Z",
+      });
+      const afterFollowup = reduceAlertDelivery(result.state, nextDelivery);
+      expect(afterFollowup.decision).not.toBe("rejected");
+    });
+
+    it("does not regress updatedAt when a resolved delivery for the same occurrence arrives late", () => {
+      const runningState = incidentWithRunningRemediation();
+      const lateResolved = delivery({
+        alertStatus: "resolved",
+        endsAt: "2026-08-01T00:00:30.000Z",
+        receivedAt: "2026-08-01T00:00:10.000Z",
+        deliveryId: "delivery-late-resolved",
+      });
+
+      const result = reduceAlertDelivery(runningState, lateResolved);
+
+      expect(result).toMatchObject({
+        decision: "updated",
+        state: {
+          alertStatus: "resolved",
+          stage: "remediation",
+          lastReceivedAt: "2026-08-01T00:00:10.000Z",
+          updatedAt: "2026-08-01T00:05:00.000Z",
+        },
+      });
+      expect(result.state?.updatedAt).toBe(runningState.updatedAt);
+      expect(readIncidentStateV3(result.state)).toMatchObject({ ok: true });
+
+      const nextDelivery = delivery({
+        deliveryId: "delivery-legit-followup-2",
+        receivedAt: "2026-08-01T00:06:00.000Z",
+      });
+      const afterFollowup = reduceAlertDelivery(result.state, nextDelivery);
+      expect(afterFollowup.decision).not.toBe("rejected");
+    });
+
+    it("does not regress updatedAt when a stale refire arrives after post-resolution evidence work", () => {
+      const created = reduceAlertDelivery(
+        undefined,
+        delivery({ receivedAt: "2026-07-25T00:00:05.000Z" }),
+      );
+      if (created.decision !== "created") {
+        throw new Error("fixture incident was not created");
+      }
+      const resolved = reduceAlertDelivery(
+        created.state,
+        delivery({
+          alertStatus: "resolved",
+          endsAt: "2026-07-25T00:00:30.000Z",
+          receivedAt: "2026-07-25T00:01:00.000Z",
+          deliveryId: "delivery-2",
+        }),
+      );
+      if (resolved.decision !== "updated") {
+        throw new Error("fixture incident was not resolved");
+      }
+      // Independent, non-delivery-driven work keeps advancing the incident's logical clock
+      // well past this resolved delivery's own receivedAt.
+      const withEvidence = recordMetricEvidence(
+        resolved.state,
+        {
+          alertId: delivery().alertId,
+          metric: "payment_success_rate",
+          currentValue: 98,
+          baselineValue: 99,
+          relativeChange: -0.01,
+          classification: "within_expected_range",
+          source: "prometheus:payment_success_rate",
+          evidenceSummary: "recheck",
+        },
+        "2026-07-25T00:10:00.000Z",
+      );
+
+      // A stale refire for the same occurrence, delayed in flight, still satisfies the
+      // lastReceivedAt ordering check (>= 00:01:00) but is far behind the current updatedAt.
+      const staleRefire = reduceAlertDelivery(
+        withEvidence,
+        delivery({
+          receivedAt: "2026-07-25T00:01:30.000Z",
+          deliveryId: "delivery-3-stale",
+        }),
+      );
+
+      expect(staleRefire).toMatchObject({
+        decision: "stale_refire",
+        state: {
+          alertStatus: "resolved",
+          lastReceivedAt: "2026-07-25T00:01:30.000Z",
+          updatedAt: "2026-07-25T00:10:00.000Z",
+        },
+      });
+      expect(staleRefire.state?.updatedAt).toBe(withEvidence.updatedAt);
+      expect(readIncidentStateV3(staleRefire.state)).toMatchObject({ ok: true });
+
+      const nextDelivery = delivery({
+        deliveryId: "delivery-legit-followup-3",
+        receivedAt: "2026-07-25T00:11:00.000Z",
+      });
+      const afterFollowup = reduceAlertDelivery(
+        staleRefire.state,
+        nextDelivery,
+      );
+      expect(afterFollowup.decision).not.toBe("rejected");
     });
   });
 });

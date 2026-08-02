@@ -165,6 +165,29 @@ function appendRecentDeliveryId(
   );
 }
 
+/**
+ * `updatedAt` is the incident's logical clock: every other invariant
+ * (`lastReceivedAt <= updatedAt`, remediation attempt timestamps
+ * `<= updatedAt`, ...) is expressed relative to it. A delivery's
+ * `receivedAt` only has to be non-decreasing against the *previous
+ * delivery's* `receivedAt` (see the `received_at_regression` check above),
+ * not against work the incident may have done meanwhile (evidence
+ * collection, approval, a remediation attempt). A late-but-otherwise-valid
+ * redelivery — an Alertmanager retry, a duplicate from an HA replica, a
+ * delayed queue entry — can therefore carry a `receivedAt` that is older
+ * than the incident's current `updatedAt`. Applying it as-is would move
+ * `updatedAt` backward, past timestamps already recorded on the state
+ * (e.g. a running remediation attempt's `startedAt`), producing a state
+ * that fails `readIncidentStateV3`. Clamping forward-only here keeps
+ * `updatedAt` monotonic while `lastReceivedAt` still reflects the
+ * delivery's own `receivedAt` for delivery-ordering purposes.
+ */
+function monotonicUpdatedAt(previousUpdatedAt: string, candidate: string): string {
+  return Date.parse(candidate) > Date.parse(previousUpdatedAt)
+    ? candidate
+    : previousUpdatedAt;
+}
+
 export function reduceAlertDelivery(
   current: PluginJsonValue | undefined,
   delivery: AlertDelivery,
@@ -245,7 +268,7 @@ export function reduceAlertDelivery(
         ...state,
         deliveryCount: state.deliveryCount + 1,
         lastReceivedAt: delivery.receivedAt,
-        updatedAt: delivery.receivedAt,
+        updatedAt: monotonicUpdatedAt(state.updatedAt, delivery.receivedAt),
       },
     };
   }
@@ -259,7 +282,7 @@ export function reduceAlertDelivery(
       delivery.deliveryId,
     ),
     lastReceivedAt: delivery.receivedAt,
-    updatedAt: delivery.receivedAt,
+    updatedAt: monotonicUpdatedAt(state.updatedAt, delivery.receivedAt),
   };
 
   if (

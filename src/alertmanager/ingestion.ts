@@ -152,19 +152,31 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Delivery identity deliberately excludes labels, annotations, and
+ * generatorURL. Alertmanager re-sends a still-firing alert on every
+ * `repeat_interval`, and real-world templates commonly render live values
+ * into annotations (a current metric reading, an elapsed duration, a
+ * generatorURL query fragment) that change on every re-send even though it
+ * is, semantically, the same lifecycle event. Hashing those fields would
+ * make every periodic re-send look like a distinct delivery, defeating
+ * bounded deduplication. `fingerprint` is Alertmanager's own hash of the
+ * alert's label set, so it already captures label identity without us
+ * re-hashing labels ourselves. `startsAt` distinguishes one occurrence of
+ * an alert from a later, independent one sharing the same fingerprint.
+ * `alertStatus` and the canonical `endsAt` (always null for firing, a
+ * validated fixed timestamp for resolved) distinguish the firing
+ * announcement from the resolution: they must never collide, since the
+ * reducer treats them as different lifecycle transitions.
+ */
 function createAlertmanagerDeliveryId(input: {
-  groupKey: string;
-  receiver: string;
   alertStatus: "firing" | "resolved";
   fingerprint: string;
   startsAt: string;
   endsAt: string | null;
-  labels: Record<string, string>;
-  annotations: Record<string, string>;
-  generatorURL: string;
 }): string {
   const identity = stableJson({
-    schema: "alertmanager-delivery-v1",
+    schema: "alertmanager-delivery-v2",
     ...input,
   });
   return `am-v4:${createHash("sha256").update(identity).digest("hex")}`;
@@ -174,8 +186,6 @@ function canonicalizeAlert(
   value: unknown,
   context: {
     index: number;
-    groupKey: string;
-    receiver: string;
     receivedAt: string;
   },
 ): CanonicalAlertmanagerAlert | RejectedAlertmanagerAlert {
@@ -228,15 +238,10 @@ function canonicalizeAlert(
   }
 
   const deliveryId = createAlertmanagerDeliveryId({
-    groupKey: context.groupKey,
-    receiver: context.receiver,
     alertStatus,
     fingerprint: value.fingerprint,
     startsAt,
     endsAt,
-    labels: value.labels,
-    annotations: value.annotations,
-    generatorURL: value.generatorURL,
   });
 
   return {
@@ -255,9 +260,9 @@ function canonicalizeAlert(
 
 /**
  * Converts an untrusted Alertmanager webhook v4 payload into the smaller
- * delivery contract accepted by the incident reducer. Alert labels and
- * annotations participate only in delivery identity; they never become
- * incident evidence.
+ * delivery contract accepted by the incident reducer. Labels and
+ * annotations are validated (an alertname must be present) but do not
+ * participate in delivery identity and never become incident evidence.
  */
 export function canonicalizeAlertmanagerWebhook(
   payload: unknown,
@@ -297,8 +302,6 @@ export function canonicalizeAlertmanagerWebhook(
   payload.alerts.forEach((alert, index) => {
     const result = canonicalizeAlert(alert, {
       index,
-      groupKey: payload.groupKey as string,
-      receiver: payload.receiver as string,
       receivedAt: canonicalReceivedAt,
     });
     if ("delivery" in result) {
