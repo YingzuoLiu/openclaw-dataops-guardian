@@ -62,15 +62,18 @@ export function appendJsonLineDurable(path: string, value: unknown): void {
   }
 }
 
+/**
+ * Returns `undefined` only when `path` does not exist at all — the
+ * legitimate "nothing persisted yet" case. A file that exists but is empty
+ * (or contains anything else `JSON.parse` rejects) is a corruption signal,
+ * not a fresh start: `JSON.parse` is left to throw for it so the caller
+ * fails closed instead of silently reinitializing over lost state.
+ */
 export function readJsonFileOrUndefined(path: string): unknown {
   if (!existsSync(path)) {
     return undefined;
   }
-  const raw = readFileSync(path, "utf8");
-  if (raw.trim().length === 0) {
-    return undefined;
-  }
-  return JSON.parse(raw);
+  return JSON.parse(readFileSync(path, "utf8"));
 }
 
 /**

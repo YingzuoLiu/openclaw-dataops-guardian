@@ -38,6 +38,123 @@ JSON file (`bridge-state.json` under `ALERTMANAGER_BRIDGE_STATE_DIR`):
 - **sanitized audit records** (`src/alertmanager/http-bridge/audit.ts`),
   appended to `audit.jsonl` in the same state directory.
 
+## Occurrence routing
+
+`applyDelivery` (`src/alertmanager/http-bridge/processor.ts`) resolves each
+canonical delivery to the occurrence it actually belongs to in two phases,
+in this order:
+
+1. **The delivery's own deterministic occurrence is checked first**, before
+   ever consulting the fingerprint's route. `occurrenceId`/`sessionKey` are
+   pure functions of `fingerprint` + `startsAt` (unchanged from Step 2), so
+   this is a direct `sessions.describe` on that exact session — independent
+   of whatever the fingerprint's route currently points at. If that session
+   already holds state, the delivery is reduced directly against *it*
+   (`reduceAlertDelivery(ownState, delivery)`), and the resulting state is
+   persisted back — preserving whatever `stage`/`evidence`/`approvalStatus`/
+   `remediationAttempts` it already had. This is what makes it safe for a
+   delivery to target an occurrence that isn't the fingerprint's currently
+   active one: a delayed retry for a historical occurrence, a delayed
+   `resolved` delivery for an occurrence that already exists (correctly
+   *not* orphaned), or a checkpoint replay resuming after a crash between an
+   earlier destination write and its route commit (see the crash-window
+   table below) all go through this same path, and none of them can
+   overwrite real state with a freshly-created `alert_received` one.
+2. **Only once step 1 confirms the delivery's own occurrence does not exist
+   yet** does the bridge fall back to `planAlertDeliveryIngestion` against
+   the fingerprint's *active* route — exactly the "is anything currently
+   running that must block this new occurrence" question the reducer
+   already answers correctly for the active occurrence.
+
+Two guards apply across both phases:
+
+- **The active route only ever moves forward.** Before advancing a
+  fingerprint's route to a different occurrence, the bridge compares the
+  candidate's `startsAt` against the *current* route's own `startsAt` (read
+  live from the Gateway, never cached) and only advances if the candidate is
+  strictly newer. A delayed delivery for an occurrence older than the
+  active one is persisted to its own session but never moves the route
+  backward. This same comparison is what lets a checkpoint replay resuming
+  after a crash *complete* an interrupted forward move rather than being
+  blocked by it.
+- **A fingerprint holds at most one deferred checkpoint, and a conflicting
+  one is rejected, not overwritten.** If a fingerprint already has a durably
+  held checkpoint and a *different* delivery (`deliveryId` mismatch) would
+  also need to defer, the bridge throws `CheckpointConflictError`
+  (`src/alertmanager/http-bridge/errors.ts`) instead of silently discarding
+  the first one — the HTTP layer maps this to `503`, so Alertmanager retries
+  once the held delivery has been resolved. Re-holding the *same*
+  `deliveryId` (Alertmanager's own repeat-send, or a replay drain re-checking
+  an unresolved checkpoint) is treated as an idempotent rewrite, not a
+  conflict.
+
+## Consistency: fail closed, never silently recreate
+
+Every place the bridge is about to trust "no state exists here, safe to
+create fresh" first confirms that with a live Gateway read. Two situations
+throw `BridgeConsistencyError` instead of proceeding:
+
+- **A route points at a session the Gateway no longer has**, or whose value
+  fails `readIncidentStateV3`. A route the bridge itself created must always
+  resolve to a valid session; a miss means the session was deleted or reset
+  externally, storage was corrupted, or the route is simply wrong.
+  Recreating from scratch would fabricate a new `alert_received` occurrence
+  over whatever that destination might still hold once it is available
+  again, which is exactly the class of bug this guards against.
+- **A destination session's value exists but fails to decode.** Same
+  reasoning, regardless of whether a route currently points there.
+
+`BridgeStateStore` (`bridge-state.ts`) applies the same fail-closed posture
+to its own file:
+
+- **An existing-but-empty `bridge-state.json` is treated as corrupted, not
+  as "nothing persisted yet."** Only a genuinely missing file is the
+  legitimate fresh-start case; `readJsonFileOrUndefined`
+  (`json-store.ts`) lets `JSON.parse` throw for anything else, and the
+  bridge refuses to start rather than silently reinitializing over lost
+  routes/checkpoints.
+- **Cross-field validation on load**: every checkpoint's held delivery must
+  be a structurally valid `AlertDelivery`; a checkpoint filed under
+  fingerprint `F` must hold a delivery whose own `fingerprint` is `F`; and
+  when both a route and a checkpoint exist for the same fingerprint, the
+  checkpoint's `blockedByOccurrenceId` must match the route's `occurrenceId`.
+  A route's `sessionKey` must equal `incidentSessionKey(occurrenceId)` —
+  never an independently stored value that could drift from it.
+
+## Concurrency and consistency across writers
+
+`FingerprintLock` only serializes work *inside this one bridge process* for
+the *same fingerprint*; it says nothing about a different process writing to
+the same Gateway session concurrently — an operator, a restart-reconciliation
+coordinator, or an Agent workflow acting on an occurrence the bridge also
+touches. Whether that race is actually preventable depends on what the
+Gateway RPC itself supports:
+
+**`sessions.pluginPatch` has no compare-and-swap.** Checked directly against
+the installed `openclaw@2026.6.9` RPC schema
+(`SessionsPluginPatchParamsSchema` in `node_modules/openclaw/dist/schema-*.js`):
+the accepted parameters are exactly `key`, `pluginId`, `namespace`, `value`,
+`unset`, with `additionalProperties: false` — there is no revision, `etag`,
+or expected-version field the Gateway would even accept, so there is no way
+for a caller to make a patch conditional on the session being unchanged
+since it was last read. This bridge does not claim otherwise.
+
+Concretely, the following is possible and is *not* prevented by anything in
+this codebase: the bridge describes a session, an external writer patches it
+(e.g. records a remediation attempt result), and the bridge's own
+`sessions.pluginPatch` — computed from the now-stale value it described —
+overwrites that write. This is a real gap, not a hypothetical one, and it is
+explicitly out of scope for Step 2b to close: doing so would require either
+a Gateway-side primitive that does not currently exist, or a single-writer
+architecture spanning more than the bridge (restart reconciliation,
+Lobster/Agent remediation-attempt lifecycle writes, and the bridge itself
+would all need to funnel through one serialization point). A future step
+should either add optimistic concurrency to `sessions.pluginPatch` upstream,
+or establish the bridge as incident state's single writer and route every
+other actor's mutations through it. Until then, deployments should avoid
+running the bridge alongside another process that patches the same
+`dataops-guardian/incident` sessions concurrently.
+
 ## Security properties
 
 - **Binds to `127.0.0.1` by default.** `ALERTMANAGER_BRIDGE_HOST` can
@@ -123,15 +240,18 @@ JSON file (`bridge-state.json` under `ALERTMANAGER_BRIDGE_STATE_DIR`):
 | Killed before the socket accepts a request | Nothing was acknowledged | Alertmanager retries the whole delivery |
 | Killed after body read, before Gateway/checkpoint write | No `2xx` was sent | Alertmanager retries; the retry re-plans from scratch |
 | Killed after `hold_deferred_delivery`'s checkpoint flush, before `2xx` is written | Checkpoint is durable on disk | Alertmanager may retry (harmless — re-planning reproduces the same checkpoint); on bridge restart, the checkpoint is loaded and still held |
-| Killed after the Gateway write for `persist_new_occurrence` (replay), before `commitRouteAndClearCheckpoint` | Destination `IncidentState` is durable on the Gateway; checkpoint and route are unchanged | On restart, the startup sweep replays the same checkpoint delivery again; the destination write repeats idempotently (same deterministic state) and the route/checkpoint flush that didn't complete before now does |
+| Killed after the Gateway write for `persist_new_occurrence` (replay), before `commitRouteAndClearCheckpoint` | Destination `IncidentState` is durable on the Gateway; checkpoint and route are unchanged | On restart, the startup sweep replays the same checkpoint delivery again; because occurrence routing always re-checks the delivery's own destination session first (see "Occurrence routing" above), the replay reduces against the state that is actually there — including anything an external workflow added to it after the interrupted write — rather than overwriting it with a fresh one; the route/checkpoint flush that didn't complete before now does |
 | Gateway restarts while the bridge stays up | `IncidentState` is unaffected (Gateway session persistence, proven in `docs/proof-2-session-extension.md`) | The bridge's `GatewayClient` reconnects; in-flight requests during the outage return `503` |
 
 The crash-window proof (`scripts/alertmanager-http-bridge-crash-proof.mjs`)
-exercises the fourth row directly: it drives the exact `persist_new_occurrence`
-replay sequence used by `processor.ts`, kills the process with `SIGKILL`
-immediately after the Gateway write completes and before the checkpoint
-clears, then asserts recovery clears the checkpoint, moves the route, and
-does not double-count the replayed delivery.
+exercises the fourth row directly, including the destination-overwrite
+guard: after the destination write under test, it further advances that
+newly created session (adds evidence, changes `stage`) to simulate a
+workflow that legitimately acted on it before the crash, kills the process
+with `SIGKILL` before the checkpoint clears, then asserts recovery clears
+the checkpoint, moves the route, does not double-count the replayed
+delivery, *and* that the externally added evidence/stage survived the
+replay rather than being reset to a fresh `alert_received` state.
 
 ## Explicit exclusions
 
@@ -182,7 +302,12 @@ only, throwaway state directories), and covers: malformed JSON / missing or
 wrong bearer token / wrong content type / oversized body, partial alert
 rejection within one webhook, repeat-delivery dedup, a new `startsAt` routing
 to an independent occurrence, a deferred checkpoint held while a remediation
-attempt is running, `503` when the Gateway is unreachable, a Gateway restart
-with the bridge left running, two bridge restarts (one while the checkpoint
-is still held, one after it has been replayed), and the crash window
-described above.
+attempt is running, two differing deferred deliveries for the same
+fingerprint (the first held durably, the second rejected with `503` rather
+than overwriting it), a route-regression scenario (`A firing -> B firing ->
+delayed A firing -> delayed A resolved`, asserting the active route stays at
+B throughout and A's own state updates correctly without ever being treated
+as orphaned), `503` when the Gateway is unreachable, a Gateway restart with
+the bridge left running, two bridge restarts (one while the checkpoint is
+still held, one after it has been replayed), and the crash window described
+above (including the destination-overwrite guard).

@@ -48,6 +48,14 @@ export type AuditEvent =
       fingerprint: string;
       deliveryId: string;
       message: string;
+    }
+  | {
+      kind: "fail_closed";
+      at: string;
+      fingerprint: string;
+      deliveryId: string;
+      errorType: "consistency" | "checkpoint_conflict";
+      message: string;
     };
 
 export class AuditLog {

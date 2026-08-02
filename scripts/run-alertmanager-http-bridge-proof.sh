@@ -119,6 +119,16 @@ start_gateway "$RUNTIME_DIR/gateway-1.log"
 start_bridge "$RUNTIME_DIR/bridge-1.log"
 run_proof_phase preflight
 run_proof_phase core-and-defer
+
+# --- A second, differing deferred delivery for the same fingerprint must be
+#     rejected (fail closed) rather than overwriting the first, already
+#     2xx-acknowledged one. ---
+run_proof_phase checkpoint-conflict
+
+# --- A delayed delivery for an occurrence older than the fingerprint's
+#     active one must never move the route backward, whether firing or
+#     resolved. ---
+run_proof_phase route-regression
 stop_bridge
 
 # --- Bridge instance #2: restart while the checkpoint's blocking attempt is

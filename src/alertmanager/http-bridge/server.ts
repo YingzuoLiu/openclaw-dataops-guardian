@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { canonicalizeAlertmanagerWebhook } from "../ingestion.js";
 import { extractBearerToken, isValidBearerToken } from "./auth.js";
 import { ALERTMANAGER_WEBHOOK_PATH, MAX_REQUEST_BODY_BYTES } from "./config.js";
+import { BridgeConsistencyError, CheckpointConflictError } from "./errors.js";
 import { FingerprintLock } from "./fingerprint-lock.js";
 import { GatewayPersistenceError } from "./gateway-incident-client.js";
 import {
@@ -212,6 +213,30 @@ async function handleRequest(
       sendJson(res, 503, {
         ok: false,
         error: "persistence_unavailable",
+        processedCount: results.length,
+        totalAcceptedCount: canonical.acceptedAlerts.length,
+      });
+      return;
+    }
+    if (
+      (error instanceof BridgeConsistencyError || error instanceof CheckpointConflictError) &&
+      currentAccepted
+    ) {
+      deps.audit.record({
+        kind: "fail_closed",
+        at: deps.now(),
+        fingerprint: currentAccepted.delivery.fingerprint,
+        deliveryId: currentAccepted.delivery.deliveryId,
+        errorType:
+          error instanceof BridgeConsistencyError ? "consistency" : "checkpoint_conflict",
+        message: error.message,
+      });
+      sendJson(res, 503, {
+        ok: false,
+        error:
+          error instanceof BridgeConsistencyError
+            ? "consistency_check_failed"
+            : "checkpoint_conflict",
         processedCount: results.length,
         totalAcceptedCount: canonical.acceptedAlerts.length,
       });

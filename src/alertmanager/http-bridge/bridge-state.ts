@@ -1,4 +1,6 @@
 import type { DeferredAlertDeliveryCheckpoint } from "../ingestion.js";
+import type { AlertDelivery } from "../../state/incident-reducer.js";
+import { incidentSessionKey } from "./gateway-incident-client.js";
 import {
   readJsonFileOrUndefined,
   writeJsonFileDurable,
@@ -35,11 +37,35 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/**
+ * A route's `sessionKey` is never stored independently of `occurrenceId` —
+ * it must always equal `incidentSessionKey(occurrenceId)`. Validating that
+ * here catches corruption or hand-edited state before it can send the
+ * bridge describing/patching the wrong Gateway session.
+ */
 function isFingerprintRoute(value: unknown): value is FingerprintRoute {
   return (
     isRecord(value) &&
     isNonEmptyString(value.occurrenceId) &&
-    isNonEmptyString(value.sessionKey)
+    isNonEmptyString(value.sessionKey) &&
+    value.sessionKey === incidentSessionKey(value.occurrenceId)
+  );
+}
+
+function isTimestamp(value: unknown): value is string {
+  return typeof value === "string" && Number.isFinite(Date.parse(value));
+}
+
+function isValidAlertDelivery(value: unknown): value is AlertDelivery {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.alertId) &&
+    isNonEmptyString(value.fingerprint) &&
+    new Set(["firing", "resolved"]).has(value.alertStatus as string) &&
+    isTimestamp(value.startsAt) &&
+    (value.endsAt === null || isTimestamp(value.endsAt)) &&
+    isTimestamp(value.receivedAt) &&
+    isNonEmptyString(value.deliveryId)
   );
 }
 
@@ -51,7 +77,7 @@ function isDeferredCheckpoint(
     value.schemaVersion === 1 &&
     isNonEmptyString(value.checkpointId) &&
     isNonEmptyString(value.blockedByOccurrenceId) &&
-    isRecord(value.delivery)
+    isValidAlertDelivery(value.delivery)
   );
 }
 
@@ -78,6 +104,28 @@ export function decodeBridgeState(value: unknown): BridgeState {
     if (!isNonEmptyString(fingerprint) || !isDeferredCheckpoint(checkpoint)) {
       throw new Error(
         `bridge state file has an invalid checkpoint entry: ${fingerprint}`,
+      );
+    }
+    // A checkpoint is keyed by the fingerprint it belongs to; the held
+    // delivery's own fingerprint must agree, or the checkpoint is either
+    // corrupt or was filed under the wrong key.
+    if (checkpoint.delivery.fingerprint !== fingerprint) {
+      throw new Error(
+        `bridge state file has a checkpoint filed under fingerprint ${fingerprint} whose delivery belongs to ${checkpoint.delivery.fingerprint}`,
+      );
+    }
+    // When a route also exists for this fingerprint, the checkpoint must be
+    // blocked by *that* route's occurrence — a mismatch means the route
+    // advanced (or the checkpoint was left over from a different occurrence)
+    // without the two being updated together.
+    const route = value.routes[fingerprint];
+    if (
+      route !== undefined &&
+      isFingerprintRoute(route) &&
+      checkpoint.blockedByOccurrenceId !== route.occurrenceId
+    ) {
+      throw new Error(
+        `bridge state file has a checkpoint for fingerprint ${fingerprint} blocked by ${checkpoint.blockedByOccurrenceId}, but the route points at ${route.occurrenceId}`,
       );
     }
   }

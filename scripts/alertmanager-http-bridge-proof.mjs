@@ -489,6 +489,197 @@ async function verifyReplayedOccurrence() {
   console.log(JSON.stringify({ ok: true, phase }));
 }
 
+/**
+ * Two different deferred deliveries for the same fingerprint: the first
+ * must be held durably (2xx) and never overwritten; the second, conflicting
+ * one must be rejected (non-2xx) rather than silently discarding the first.
+ * Uses its own fingerprint/timeline, independent of the other phases.
+ */
+async function checkpointConflict() {
+  const fingerprint = "fingerprint-http-bridge-proof-checkpoint-conflict";
+  const anchorMs = freshAnchorMs();
+  const t = (offsetMinutes) => anchorTimestamp(anchorMs, offsetMinutes);
+
+  const originalStartsAt = t(0);
+  const created = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt: originalStartsAt, endsAt: t(5) })]),
+    ),
+  });
+  assert(
+    created.status === 200 && created.json.results[0].disposition === "created",
+    `expected created, got ${JSON.stringify(created.json)}`,
+  );
+  const occurrenceId = createIncidentOccurrenceId(fingerprint, originalStartsAt);
+  const sessionKey = incidentSessionKey(occurrenceId);
+
+  const gateway = await connectGatewayClient();
+  try {
+    const currentValue = await gateway.describeIncidentState(sessionKey);
+    const decoded = readIncidentStateV3(currentValue);
+    assert(decoded.ok, `occurrence state failed to decode: ${JSON.stringify(decoded)}`);
+    const approved = {
+      ...decoded.state,
+      stage: "remediation",
+      approvalStatus: "approved",
+      proposedAction: "synthetic_checkpoint_conflict_mutation",
+    };
+    const started = beginRemediationAttempt(approved, {
+      idempotencyKey: "checkpoint-conflict-attempt-1",
+      target: { kind: "synthetic_checkpoint_conflict" },
+      startedAt: realNowPlusSeconds(1),
+    });
+    assert(started.decision === "started", `remediation attempt did not start: ${started.decision}`);
+    await gateway.persistIncidentState(sessionKey, started.state);
+  } finally {
+    await gateway.close();
+  }
+
+  const firstHeldStartsAt = t(10);
+  const first = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt: firstHeldStartsAt, endsAt: t(10.5) })]),
+    ),
+  });
+  assert(
+    first.status === 200,
+    `expected 200 for the first deferred delivery, got ${first.status}: ${JSON.stringify(first.json)}`,
+  );
+  assert(
+    first.json.results[0].disposition === "deferred_new_occurrence",
+    `expected the first delivery to be deferred, got ${JSON.stringify(first.json.results[0])}`,
+  );
+
+  const secondHeldStartsAt = t(20);
+  const second = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt: secondHeldStartsAt, endsAt: t(20.5) })]),
+    ),
+  });
+  assert(
+    second.status === 503,
+    `expected 503 for the conflicting deferred delivery, got ${second.status}: ${JSON.stringify(second.json)}`,
+  );
+  assert(
+    second.json.error === "checkpoint_conflict",
+    `expected checkpoint_conflict error code, got ${JSON.stringify(second.json)}`,
+  );
+
+  const secondOccurrenceId = createIncidentOccurrenceId(fingerprint, secondHeldStartsAt);
+  const gateway2 = await connectGatewayClient();
+  try {
+    const secondState = await gateway2.describeIncidentState(incidentSessionKey(secondOccurrenceId));
+    assert(secondState === undefined, "the conflicting delivery's occurrence must not have been created");
+  } finally {
+    await gateway2.close();
+  }
+
+  // The first held delivery must still be intact: resending it must still
+  // report deferred_new_occurrence against the same blocking occurrence.
+  const resendFirst = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt: firstHeldStartsAt, endsAt: t(10.5) })]),
+    ),
+  });
+  assert(
+    resendFirst.status === 200,
+    `expected 200 resending the first held delivery, got ${resendFirst.status}`,
+  );
+  assert(
+    resendFirst.json.results[0].disposition === "deferred_new_occurrence" &&
+      resendFirst.json.results[0].occurrenceId === occurrenceId,
+    `expected the first held delivery to still be intact, got ${JSON.stringify(resendFirst.json.results[0])}`,
+  );
+
+  console.log(JSON.stringify({ ok: true, phase }));
+}
+
+/**
+ * A firing -> B firing -> delayed A firing -> delayed A resolved. The
+ * active route must stay at B throughout; the delayed deliveries for A must
+ * land on A's own occurrence (dedup, then resolve) without moving the route
+ * or being treated as orphaned. Uses its own fingerprint/timeline.
+ */
+async function routeRegression() {
+  const fingerprint = "fingerprint-http-bridge-proof-route-regression";
+  const anchorMs = freshAnchorMs();
+  const t = (offsetMinutes) => anchorTimestamp(anchorMs, offsetMinutes);
+
+  const startsAtA = t(0);
+  const a = await postWebhook({
+    body: JSON.stringify(envelope([webhookAlert({ fingerprint, startsAt: startsAtA, endsAt: t(5) })])),
+  });
+  assert(
+    a.status === 200 && a.json.results[0].disposition === "created",
+    `expected A created, got ${JSON.stringify(a.json)}`,
+  );
+  const occurrenceIdA = createIncidentOccurrenceId(fingerprint, startsAtA);
+
+  const startsAtB = t(10);
+  const b = await postWebhook({
+    body: JSON.stringify(envelope([webhookAlert({ fingerprint, startsAt: startsAtB, endsAt: t(15) })])),
+  });
+  assert(
+    b.status === 200 && b.json.results[0].disposition === "new_occurrence",
+    `expected B new_occurrence, got ${JSON.stringify(b.json)}`,
+  );
+  const occurrenceIdB = createIncidentOccurrenceId(fingerprint, startsAtB);
+  assert(occurrenceIdA !== occurrenceIdB, "A and B must be independent occurrences");
+
+  // A delayed resend of A's original firing delivery must dedup against A
+  // and must not move the route.
+  const delayedA = await postWebhook({
+    body: JSON.stringify(envelope([webhookAlert({ fingerprint, startsAt: startsAtA, endsAt: t(5) })])),
+  });
+  assert(delayedA.status === 200, `expected 200, got ${delayedA.status}: ${JSON.stringify(delayedA.json)}`);
+  assert(
+    delayedA.json.results[0].disposition === "duplicate" &&
+      delayedA.json.results[0].occurrenceId === occurrenceIdA,
+    `expected delayed A to dedup against A, got ${JSON.stringify(delayedA.json.results[0])}`,
+  );
+
+  // A delayed resolution for A must update A's own occurrence — not be
+  // treated as orphaned — and must still not move the route.
+  const delayedAResolved = await postWebhook({
+    body: JSON.stringify(
+      envelope(
+        [
+          webhookAlert({
+            fingerprint,
+            status: "resolved",
+            startsAt: startsAtA,
+            endsAt: t(6),
+          }),
+        ],
+        { status: "resolved" },
+      ),
+    ),
+  });
+  assert(
+    delayedAResolved.status === 200,
+    `expected 200, got ${delayedAResolved.status}: ${JSON.stringify(delayedAResolved.json)}`,
+  );
+  assert(
+    delayedAResolved.json.results[0].disposition === "updated" &&
+      delayedAResolved.json.results[0].occurrenceId === occurrenceIdA,
+    `expected delayed A resolved to update A, got ${JSON.stringify(delayedAResolved.json.results[0])}`,
+  );
+
+  // The route must still be at B: resending B's delivery must dedup
+  // against B, not treat it as stale.
+  const resendB = await postWebhook({
+    body: JSON.stringify(envelope([webhookAlert({ fingerprint, startsAt: startsAtB, endsAt: t(15) })])),
+  });
+  assert(resendB.status === 200, `expected 200, got ${resendB.status}: ${JSON.stringify(resendB.json)}`);
+  assert(
+    resendB.json.results[0].disposition === "duplicate" &&
+      resendB.json.results[0].occurrenceId === occurrenceIdB,
+    `expected B to still be the active occurrence, got ${JSON.stringify(resendB.json.results[0])}`,
+  );
+
+  console.log(JSON.stringify({ ok: true, phase }));
+}
+
 const phases = {
   preflight,
   "core-and-defer": coreAndDefer,
@@ -496,6 +687,8 @@ const phases = {
   "verify-checkpoint-still-held": verifyCheckpointStillHeld,
   "settle-and-drain": settleAndDrain,
   "verify-replayed-occurrence": verifyReplayedOccurrence,
+  "checkpoint-conflict": checkpointConflict,
+  "route-regression": routeRegression,
 };
 
 const handler = phases[phase];

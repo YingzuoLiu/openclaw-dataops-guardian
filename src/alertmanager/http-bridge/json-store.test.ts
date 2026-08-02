@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -39,6 +39,12 @@ describe("writeJsonFileDurable / readJsonFileOrUndefined", () => {
 
   it("returns undefined for a missing file", () => {
     expect(readJsonFileOrUndefined(join(dir, "missing.json"))).toBeUndefined();
+  });
+
+  it("throws for a file that exists but is empty, rather than treating it as missing", () => {
+    const path = join(dir, "empty.json");
+    writeFileSync(path, "", "utf8");
+    expect(() => readJsonFileOrUndefined(path)).toThrow();
   });
 
   it("creates parent directories as needed", () => {

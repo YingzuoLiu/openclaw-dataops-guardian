@@ -149,11 +149,32 @@ async function crash() {
   assert(replayPlan.action === "persist_new_occurrence", "replay did not create a new occurrence");
   assert(replayPlan.occurrenceId === heldOccurrenceId, "replay occurrenceId mismatch");
 
-  // The crash window under test: the destination write below is the last
-  // step that must be durable before an HTTP 2xx / checkpoint deletion. We
-  // deliberately terminate the process immediately after it completes and
-  // before `commitRouteAndClearCheckpoint` runs.
+  // The crash window under test: this destination write is the step that
+  // must be durable before an HTTP 2xx / checkpoint deletion.
   await gateway.persistIncidentState(heldSessionKey, replayPlan.state);
+
+  // Between that write and the bridge ever getting a chance to commit the
+  // route/checkpoint, the newly created destination session is already a
+  // real, visible occurrence — some other workflow (an operator, Lobster, an
+  // Agent) can legitimately act on it. Simulate that here so recovery's
+  // eventual re-drain is proven not to clobber it back to a fresh
+  // `alert_received` state.
+  const advancedState = {
+    ...replayPlan.state,
+    stage: "evidence_collection",
+    evidence: [
+      {
+        source: "crash_proof_external_advance",
+        observedAt: new Date(anchorMs + 62 * 60_000).toISOString(),
+        summary: "Simulates external workflow progress between the crash-vulnerable write and recovery.",
+      },
+    ],
+    updatedAt: new Date(anchorMs + 62 * 60_000).toISOString(),
+  };
+  await gateway.persistIncidentState(heldSessionKey, advancedState);
+
+  // We deliberately terminate the process immediately after both writes
+  // above complete and before `commitRouteAndClearCheckpoint` runs.
   writeFileSync(
     markerPath,
     `${JSON.stringify({ destinationWritten: true, occurrenceId: heldOccurrenceId })}\n`,
@@ -189,6 +210,16 @@ async function recover() {
     preDrainHeldDecoded.state.recentDeliveryIds.includes("crash-proof-delivery-2"),
     "destination state is missing the replayed delivery",
   );
+  // The pre-crash external advance must also have survived the crash itself
+  // (this is an ordinary durable Gateway write, unaffected by the bridge
+  // process dying) — this is the state the *replay* must not clobber.
+  assert(
+    preDrainHeldDecoded.state.stage === "evidence_collection" &&
+      preDrainHeldDecoded.state.evidence.some(
+        (entry) => entry.source === "crash_proof_external_advance",
+      ),
+    "external advance did not survive the crash itself",
+  );
 
   await drainPendingCheckpoint({ bridgeState, gateway, audit, now: () => new Date().toISOString() }, fingerprint);
 
@@ -206,6 +237,21 @@ async function recover() {
     postDrainHeldDecoded.state.recentDeliveryIds.length === 1,
     "replaying an already-settled checkpoint must not double-count the delivery",
   );
+  // The core regression check: the recovery replay must reduce against the
+  // *existing* destination state, not overwrite it with a freshly-created
+  // one. A buggy replay that blindly persists a fresh `alert_received` state
+  // would silently wipe the stage/evidence asserted below while still
+  // passing a delivery-count-only check.
+  assert(
+    postDrainHeldDecoded.state.stage === "evidence_collection",
+    `recovery replay overwrote the destination's stage (got ${postDrainHeldDecoded.state.stage})`,
+  );
+  assert(
+    postDrainHeldDecoded.state.evidence.some(
+      (entry) => entry.source === "crash_proof_external_advance",
+    ),
+    "recovery replay discarded evidence recorded before the crash",
+  );
 
   await gateway.close();
 
@@ -216,6 +262,7 @@ async function recover() {
       checkpointCleared: true,
       routedOccurrenceId: routeAfterDrain.occurrenceId,
       deliveryCountAfterRecovery: postDrainHeldDecoded.state.deliveryCount,
+      destinationStagePreserved: postDrainHeldDecoded.state.stage,
     }),
   );
 }
