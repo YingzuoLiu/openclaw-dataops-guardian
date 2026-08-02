@@ -26,17 +26,21 @@ because `sessions.pluginPatch` requires an active registration for the
 `dataops-guardian/incident` session extension namespace — the bridge itself
 registers nothing.
 
-The bridge holds exactly three pieces of local state, all in one versioned
-JSON file (`bridge-state.json` under `ALERTMANAGER_BRIDGE_STATE_DIR`):
+The bridge holds exactly three pieces of local state, under
+`ALERTMANAGER_BRIDGE_STATE_DIR`, in two separate files:
 
-- **fingerprint → occurrence/session route** (`src/alertmanager/http-bridge/bridge-state.ts`):
-  a pointer to which Gateway session currently owns a fingerprint's incident
-  state. Never a copy of `IncidentState` — every planning decision re-reads
-  the current state from the Gateway session immediately before acting.
-- **deferred checkpoints**, one per fingerprint, holding the exact canonical
-  delivery `planAlertDeliveryIngestion` could not route yet.
-- **sanitized audit records** (`src/alertmanager/http-bridge/audit.ts`),
-  appended to `audit.jsonl` in the same state directory.
+- **fingerprint → occurrence/session route** and **deferred checkpoints**
+  (`src/alertmanager/http-bridge/bridge-state.ts`) live together in one
+  versioned JSON file, `bridge-state.json`:
+  - the route is a pointer to which Gateway session currently owns a
+    fingerprint's incident state — never a copy of `IncidentState` itself,
+    since every planning decision re-reads the current state from the
+    Gateway session immediately before acting;
+  - a checkpoint (one per fingerprint) holds the exact canonical delivery
+    `planAlertDeliveryIngestion` could not route yet.
+- **sanitized audit records** (`src/alertmanager/http-bridge/audit.ts`) are a
+  *separate* file, `audit.jsonl`, in the same state directory — appended
+  independently of `bridge-state.json` and never embedded inside it.
 
 ## Occurrence routing
 
@@ -91,8 +95,15 @@ Two guards apply across both phases:
 ## Consistency: fail closed, never silently recreate
 
 Every place the bridge is about to trust "no state exists here, safe to
-create fresh" first confirms that with a live Gateway read. Two situations
-throw `BridgeConsistencyError` instead of proceeding:
+create fresh" first confirms that with a live Gateway read, and every state
+it reads back is checked for *identity*, not just internal validity — that
+it is actually the state for the fingerprint/occurrence the bridge asked
+for, not merely some other well-formed `IncidentState`. `readIncidentStateV3`
+alone cannot catch that: it only proves a value is internally
+self-consistent (its own `occurrenceId` matches its own `fingerprint` +
+`startsAt`), not that it is the value stored under the key the bridge
+expected. The following throw `BridgeConsistencyError` instead of
+proceeding:
 
 - **A route points at a session the Gateway no longer has**, or whose value
   fails `readIncidentStateV3`. A route the bridge itself created must always
@@ -101,8 +112,31 @@ throw `BridgeConsistencyError` instead of proceeding:
   Recreating from scratch would fabricate a new `alert_received` occurrence
   over whatever that destination might still hold once it is available
   again, which is exactly the class of bug this guards against.
+- **A route's destination session decodes, but its identity doesn't match
+  the route.** `describeRouteStateStrict` additionally requires
+  `state.fingerprint === fingerprint`, `state.occurrenceId ===
+  route.occurrenceId`, and `route.sessionKey ===
+  incidentSessionKey(state.occurrenceId)`. A mismatch means the route points
+  at the wrong session (e.g. two fingerprints' routes colliding on one
+  session key through corruption) — a decodable-but-wrong value must not be
+  treated as authoritative for the fingerprint asking for it.
 - **A destination session's value exists but fails to decode.** Same
-  reasoning, regardless of whether a route currently points there.
+  reasoning as the route case, regardless of whether a route currently
+  points there.
+- **A delivery's own deterministic destination session decodes, but its
+  identity doesn't match the delivery.** Symmetric to the route check:
+  before reducing a delivery against its own destination session's existing
+  state (see "Occurrence routing" above), the bridge requires
+  `state.fingerprint === delivery.fingerprint`, `state.occurrenceId` equal
+  to the delivery's own deterministic `occurrenceId`, and `state.startsAt
+  === delivery.startsAt`. Any single one of these checks failing is enough
+  to reject; only when both are already implied by the other two does the
+  third become effectively redundant, and it is kept anyway as a defense
+  against a `createIncidentOccurrenceId` hash collision. All three fail
+  closed to `503`, never to an ordinary reducer `rejected` outcome — an
+  identity mismatch is a bridge-state/Gateway inconsistency, not a
+  malformed-delivery response the caller should see as a normal per-alert
+  result.
 
 `BridgeStateStore` (`bridge-state.ts`) applies the same fail-closed posture
 to its own file:
@@ -114,12 +148,30 @@ to its own file:
   bridge refuses to start rather than silently reinitializing over lost
   routes/checkpoints.
 - **Cross-field validation on load**: every checkpoint's held delivery must
-  be a structurally valid `AlertDelivery`; a checkpoint filed under
-  fingerprint `F` must hold a delivery whose own `fingerprint` is `F`; and
-  when both a route and a checkpoint exist for the same fingerprint, the
-  checkpoint's `blockedByOccurrenceId` must match the route's `occurrenceId`.
-  A route's `sessionKey` must equal `incidentSessionKey(occurrenceId)` —
-  never an independently stored value that could drift from it.
+  be a structurally valid `AlertDelivery`, and additionally pass the same
+  delivery-contract validation `reduceAlertDelivery` itself enforces at
+  runtime (timestamp validity, `receivedAt >= startsAt`, `firing` requiring
+  `endsAt: null`, `resolved` requiring a valid `endsAt >= startsAt`) —
+  reused directly (`reduceAlertDelivery(undefined, delivery)`, checking the
+  decision isn't `rejected`) rather than re-implemented, so the two can
+  never drift apart. A checkpoint's `checkpointId` must equal
+  `computeDeferredAlertDeliveryCheckpointId(blockedByOccurrenceId,
+  delivery.deliveryId)` — the exact same exported computation
+  `planAlertDeliveryIngestion` uses (`ingestion.ts`), not a second copy of
+  the hash. A checkpoint filed under fingerprint `F` must hold a delivery
+  whose own `fingerprint` is `F`. **A checkpoint must have a corresponding
+  route** — a checkpoint only ever exists because some active occurrence's
+  running remediation attempt is blocking a newer delivery, so a route for
+  that fingerprint always exists at the moment the checkpoint is created,
+  and nothing removes it while the checkpoint survives; a checkpoint with no
+  route is not "a fresh fingerprint with a held delivery" but corruption,
+  and treating it as the former on startup would route the held delivery as
+  a brand new occurrence, silently bypassing the very remediation attempt
+  `blockedByOccurrenceId` was recording. When both a route and a checkpoint
+  exist for the same fingerprint, the checkpoint's `blockedByOccurrenceId`
+  must match the route's `occurrenceId`. A route's `sessionKey` must equal
+  `incidentSessionKey(occurrenceId)` — never an independently stored value
+  that could drift from it.
 
 ## Concurrency and consistency across writers
 
@@ -184,11 +236,20 @@ running the bridge alongside another process that patches the same
   `deliveryId` is a derived digest — see docs/alertmanager-ingestion.md).
   There is no code path that appends the parsed payload, `labels`,
   `annotations`, or the `Authorization` header to any log or audit record.
+  This includes the envelope-level `webhook_received` record every
+  successfully canonicalized webhook produces (`receiver`, `groupStatus`,
+  `truncatedAlerts`, `acceptedCount`, `rejectedCount` only) — deliberately
+  excluding `groupKey`, which embeds label *values* (e.g.
+  `{}:{alertname="X"}`) even though it is otherwise just envelope metadata.
 - **Per-fingerprint serialization within one process.** `FingerprintLock`
   (`src/alertmanager/http-bridge/fingerprint-lock.ts`) chains async work per
   fingerprint, so two deliveries for the same fingerprint in the same bridge
   process never interleave. This is a single-instance guarantee only — see
   Explicit exclusions.
+- **Correct path, wrong method returns `405`, not `404`.** Only
+  `req.url !== ALERTMANAGER_WEBHOOK_PATH` is `404`; a non-`POST` request to
+  the correct path gets `405` with an `Allow: POST` header, matching normal
+  HTTP semantics instead of conflating "wrong endpoint" with "wrong verb".
 
 ## Durability contract
 
@@ -216,15 +277,21 @@ running the bridge alongside another process that patches the same
   retries, and no partial state was durably committed for that alert.
 - **A checkpoint can be replayed against the same `deliveryId` safely.**
   Replay always re-runs the *ordinary* processing pipeline
-  (`applyDelivery`/`drainPendingCheckpoint` in `processor.ts`) against the
-  fingerprint's current routed session, re-deriving the outcome from live
-  Gateway state rather than trusting anything cached locally. If the
-  blocking attempt is still running, the checkpoint is simply rewritten with
-  identical content. If it has settled, the delivery is applied through
-  `reduceAlertDelivery(undefined, delivery)`, which is deterministic — a
-  redundant replay of an already-durable delivery reproduces the exact same
-  state rather than double-counting it (see docs/alertmanager-ingestion.md's
-  delivery-identity contract).
+  (`applyDelivery`/`drainPendingCheckpoint` in `processor.ts`), re-deriving
+  the outcome from live Gateway state rather than trusting anything cached
+  locally — it is not a special code path. If the blocking attempt is still
+  running, the checkpoint is simply rewritten with identical content. If it
+  has settled, the delivery is *not* unconditionally applied through
+  `reduceAlertDelivery(undefined, delivery)`: `applyDelivery` first checks
+  whether the delivery's own deterministic destination session already
+  exists (see "Occurrence routing" above) — it does whenever an earlier
+  replay attempt got as far as the destination write before being
+  interrupted — and if so reduces against *that* real state instead. Either
+  way the result is deterministic: a redundant replay of an already-durable
+  delivery reproduces the same state rather than double-counting it (see
+  docs/alertmanager-ingestion.md's delivery-identity contract), and never
+  discards progress a prior interrupted replay's destination write already
+  made durable.
 - **A `running` remediation attempt survives a bridge restart as `held`.**
   The bridge never starts, cancels, or investigates a remediation attempt.
   On startup, `run.ts` sweeps every pending checkpoint through
@@ -299,15 +366,18 @@ npm run alertmanager:http-bridge-proof
 
 The proof spins up an isolated OpenClaw Gateway and bridge process (loopback
 only, throwaway state directories), and covers: malformed JSON / missing or
-wrong bearer token / wrong content type / oversized body, partial alert
-rejection within one webhook, repeat-delivery dedup, a new `startsAt` routing
-to an independent occurrence, a deferred checkpoint held while a remediation
-attempt is running, two differing deferred deliveries for the same
-fingerprint (the first held durably, the second rejected with `503` rather
-than overwriting it), a route-regression scenario (`A firing -> B firing ->
-delayed A firing -> delayed A resolved`, asserting the active route stays at
-B throughout and A's own state updates correctly without ever being treated
-as orphaned), `503` when the Gateway is unreachable, a Gateway restart with
-the bridge left running, two bridge restarts (one while the checkpoint is
-still held, one after it has been replayed), and the crash window described
-above (including the destination-overwrite guard).
+wrong bearer token / wrong content type / oversized body / wrong method on
+the correct path (`405`), partial alert rejection within one webhook, a
+durable `webhook_received` audit record visible in `audit.jsonl` with
+`truncatedAlerts > 0` and no raw payload/labels/annotations/token,
+repeat-delivery dedup, a new `startsAt` routing to an independent occurrence,
+a deferred checkpoint held while a remediation attempt is running, two
+differing deferred deliveries for the same fingerprint (the first held
+durably, the second rejected with `503` rather than overwriting it), a
+route-regression scenario (`A firing -> B firing -> delayed A firing ->
+delayed A resolved`, asserting the active route stays at B throughout and
+A's own state updates correctly without ever being treated as orphaned),
+`503` when the Gateway is unreachable, a Gateway restart with the bridge left
+running, two bridge restarts (one while the checkpoint is still held, one
+after it has been replayed), and the crash window described above (including
+the destination-overwrite guard).

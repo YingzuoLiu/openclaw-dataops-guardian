@@ -325,18 +325,31 @@ export function canonicalizeAlertmanagerWebhook(
   };
 }
 
+/**
+ * Exported so callers that need to verify a persisted checkpoint's
+ * `checkpointId` (the bridge's `bridge-state.ts`, on load) can reuse this
+ * exact computation instead of re-implementing the hash algorithm
+ * separately, which would risk the two silently drifting apart.
+ */
+export function computeDeferredAlertDeliveryCheckpointId(
+  blockedByOccurrenceId: string,
+  deliveryId: string,
+): string {
+  return createHash("sha256")
+    .update(`deferred-alert-delivery-v1\0${blockedByOccurrenceId}\0${deliveryId}`)
+    .digest("hex");
+}
+
 function createDeferredCheckpoint(
   currentState: IncidentState,
   delivery: AlertDelivery,
 ): DeferredAlertDeliveryCheckpoint {
-  const checkpointId = createHash("sha256")
-    .update(
-      `deferred-alert-delivery-v1\0${currentState.occurrenceId}\0${delivery.deliveryId}`,
-    )
-    .digest("hex");
   return {
     schemaVersion: DEFERRED_ALERT_DELIVERY_CHECKPOINT_VERSION,
-    checkpointId,
+    checkpointId: computeDeferredAlertDeliveryCheckpointId(
+      currentState.occurrenceId,
+      delivery.deliveryId,
+    ),
     blockedByOccurrenceId: currentState.occurrenceId,
     delivery: structuredClone(delivery),
   };

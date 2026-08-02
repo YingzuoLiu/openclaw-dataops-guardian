@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { BridgeStateStore, decodeBridgeState } from "./bridge-state.js";
+import { computeDeferredAlertDeliveryCheckpointId } from "../ingestion.js";
 import type { DeferredAlertDeliveryCheckpoint } from "../ingestion.js";
+import { incidentSessionKey } from "./gateway-incident-client.js";
 
 let dir: string;
 let path: string;
@@ -18,24 +20,33 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+// `checkpointId` is always recomputed from the (possibly overridden)
+// `blockedByOccurrenceId`/`delivery.deliveryId` so every fixture this
+// produces satisfies the checkpointId cross-check on its own; tests that
+// want to exercise a *mismatched* checkpointId construct one by hand.
 function checkpoint(
-  overrides: Partial<DeferredAlertDeliveryCheckpoint> = {},
+  overrides: Partial<Omit<DeferredAlertDeliveryCheckpoint, "checkpointId">> = {},
 ): DeferredAlertDeliveryCheckpoint {
+  const blockedByOccurrenceId = overrides.blockedByOccurrenceId ?? "occurrence-blocking";
+  const delivery = overrides.delivery ?? {
+    alertId: "alert-1",
+    fingerprint: "fingerprint-1",
+    alertStatus: "firing",
+    startsAt: "2026-08-01T01:00:00.000Z",
+    endsAt: null,
+    receivedAt: "2026-08-01T01:00:01.000Z",
+    deliveryId: "delivery-next",
+  };
   return {
     schemaVersion: 1,
-    checkpointId: "checkpoint-1",
-    blockedByOccurrenceId: "occurrence-blocking",
-    delivery: {
-      alertId: "alert-1",
-      fingerprint: "fingerprint-1",
-      alertStatus: "firing",
-      startsAt: "2026-08-01T01:00:00.000Z",
-      endsAt: null,
-      receivedAt: "2026-08-01T01:00:01.000Z",
-      deliveryId: "delivery-next",
-    },
-    ...overrides,
+    checkpointId: computeDeferredAlertDeliveryCheckpointId(blockedByOccurrenceId, delivery.deliveryId),
+    blockedByOccurrenceId,
+    delivery,
   };
+}
+
+function routeFor(occurrenceId: string) {
+  return { occurrenceId, sessionKey: incidentSessionKey(occurrenceId) };
 }
 
 describe("decodeBridgeState", () => {
@@ -107,12 +118,7 @@ describe("decodeBridgeState", () => {
     expect(() =>
       decodeBridgeState({
         schemaVersion: 1,
-        routes: {
-          "fingerprint-1": {
-            occurrenceId: "occurrence-active",
-            sessionKey: "agent:main:dataops-guardian-incident-occurrence-active",
-          },
-        },
+        routes: { "fingerprint-1": routeFor("occurrence-active") },
         checkpoints: {
           "fingerprint-1": checkpoint({ blockedByOccurrenceId: "occurrence-stale" }),
         },
@@ -123,17 +129,41 @@ describe("decodeBridgeState", () => {
   it("accepts a checkpoint whose blockedByOccurrenceId matches the fingerprint's route", () => {
     const state = decodeBridgeState({
       schemaVersion: 1,
-      routes: {
-        "fingerprint-1": {
-          occurrenceId: "occurrence-active",
-          sessionKey: "agent:main:dataops-guardian-incident-occurrence-active",
-        },
-      },
+      routes: { "fingerprint-1": routeFor("occurrence-active") },
       checkpoints: {
         "fingerprint-1": checkpoint({ blockedByOccurrenceId: "occurrence-active" }),
       },
     });
     expect(state.checkpoints["fingerprint-1"]?.blockedByOccurrenceId).toBe("occurrence-active");
+  });
+
+  it("rejects a checkpoint that has no corresponding route", () => {
+    // A checkpoint only ever exists because some active occurrence's
+    // running remediation attempt is blocking a newer delivery — there is
+    // always a route for the fingerprint at the moment a checkpoint is
+    // created, and nothing removes the route while its checkpoint survives.
+    // A checkpoint with no route at all must not be treated as "a fresh
+    // fingerprint with a held delivery": startup replay would then route it
+    // as a brand new occurrence, bypassing the very remediation attempt
+    // `blockedByOccurrenceId` was recording.
+    expect(() =>
+      decodeBridgeState({
+        schemaVersion: 1,
+        routes: {},
+        checkpoints: { "fingerprint-1": checkpoint() },
+      }),
+    ).toThrow(/no corresponding route/);
+  });
+
+  it("rejects a checkpoint whose checkpointId does not match its own blockedByOccurrenceId/deliveryId", () => {
+    const tampered = { ...checkpoint(), checkpointId: "not-the-real-hash" };
+    expect(() =>
+      decodeBridgeState({
+        schemaVersion: 1,
+        routes: { "fingerprint-1": routeFor(tampered.blockedByOccurrenceId) },
+        checkpoints: { "fingerprint-1": tampered },
+      }),
+    ).toThrow();
   });
 });
 
@@ -162,6 +192,9 @@ describe("BridgeStateStore", () => {
   it("persists a checkpoint durably and reloads it", () => {
     const store = new BridgeStateStore(path);
     const cp = checkpoint();
+    // A checkpoint always coexists with the route for the occurrence that
+    // is blocking it (see the decode-time cross-check).
+    store.setRoute("fingerprint-1", routeFor(cp.blockedByOccurrenceId));
     store.setCheckpoint("fingerprint-1", cp);
 
     const reloaded = new BridgeStateStore(path);
@@ -171,22 +204,13 @@ describe("BridgeStateStore", () => {
 
   it("commitRouteAndClearCheckpoint moves the route and clears the checkpoint atomically", () => {
     const store = new BridgeStateStore(path);
-    store.setCheckpoint("fingerprint-1", checkpoint());
-    store.setRoute("fingerprint-1", {
-      occurrenceId: "occurrence-old",
-      sessionKey: "agent:main:dataops-guardian-incident-occurrence-old",
-    });
+    store.setRoute("fingerprint-1", routeFor("occurrence-old"));
+    store.setCheckpoint("fingerprint-1", checkpoint({ blockedByOccurrenceId: "occurrence-old" }));
 
-    store.commitRouteAndClearCheckpoint("fingerprint-1", {
-      occurrenceId: "occurrence-new",
-      sessionKey: "agent:main:dataops-guardian-incident-occurrence-new",
-    });
+    store.commitRouteAndClearCheckpoint("fingerprint-1", routeFor("occurrence-new"));
 
     const reloaded = new BridgeStateStore(path);
-    expect(reloaded.getRoute("fingerprint-1")).toEqual({
-      occurrenceId: "occurrence-new",
-      sessionKey: "agent:main:dataops-guardian-incident-occurrence-new",
-    });
+    expect(reloaded.getRoute("fingerprint-1")).toEqual(routeFor("occurrence-new"));
     expect(reloaded.getCheckpoint("fingerprint-1")).toBeUndefined();
   });
 

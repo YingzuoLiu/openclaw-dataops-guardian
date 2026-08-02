@@ -95,6 +95,28 @@ async function describeRouteStateStrict(
       `fingerprint ${fingerprint} routes to ${route.sessionKey}, but its incident state failed to decode: ${decoded.issues.join("; ")}`,
     );
   }
+  // `readIncidentStateV3` only guarantees the state is internally
+  // self-consistent (its own `occurrenceId` matches its own `fingerprint` +
+  // `startsAt`) — it says nothing about whether this is the session *this
+  // route* meant to describe. A mismatch here means the route points at the
+  // wrong session (a different fingerprint's occurrence landed there, a
+  // stale/corrupted route entry, ...); treating its state as authoritative
+  // for `fingerprint` would silently act on the wrong incident.
+  if (decoded.state.fingerprint !== fingerprint) {
+    throw new BridgeConsistencyError(
+      `fingerprint ${fingerprint} routes to ${route.sessionKey}, but that session's incident state belongs to fingerprint ${decoded.state.fingerprint}`,
+    );
+  }
+  if (decoded.state.occurrenceId !== route.occurrenceId) {
+    throw new BridgeConsistencyError(
+      `fingerprint ${fingerprint} routes to occurrenceId ${route.occurrenceId} via ${route.sessionKey}, but that session's incident state has occurrenceId ${decoded.state.occurrenceId}`,
+    );
+  }
+  if (route.sessionKey !== incidentSessionKey(decoded.state.occurrenceId)) {
+    throw new BridgeConsistencyError(
+      `route sessionKey ${route.sessionKey} for fingerprint ${fingerprint} is not the deterministic session key for occurrenceId ${decoded.state.occurrenceId}`,
+    );
+  }
   return { raw, state: decoded.state };
 }
 
@@ -171,6 +193,28 @@ async function applyDelivery(
       if (!ownDecoded.ok) {
         throw new BridgeConsistencyError(
           `destination session ${ownSessionKey} for fingerprint ${fingerprint} holds invalid incident state: ${ownDecoded.issues.join("; ")}`,
+        );
+      }
+      // Same reasoning as `describeRouteStateStrict`: the state's internal
+      // self-consistency doesn't prove it is the state for *this* delivery.
+      // `ownSessionKey` is a deterministic function of `delivery.fingerprint`
+      // + `delivery.startsAt`, so any mismatch here means the Gateway
+      // session at that exact key does not hold what it deterministically
+      // should — real corruption or a routing bug, not a normal delivery
+      // outcome, so it must not be handed to the reducer as if it were.
+      if (ownDecoded.state.fingerprint !== delivery.fingerprint) {
+        throw new BridgeConsistencyError(
+          `destination session ${ownSessionKey} holds incident state for fingerprint ${ownDecoded.state.fingerprint}, expected ${delivery.fingerprint}`,
+        );
+      }
+      if (ownDecoded.state.occurrenceId !== ownOccurrenceId) {
+        throw new BridgeConsistencyError(
+          `destination session ${ownSessionKey} holds incident state with occurrenceId ${ownDecoded.state.occurrenceId}, expected ${ownOccurrenceId}`,
+        );
+      }
+      if (ownDecoded.state.startsAt !== delivery.startsAt) {
+        throw new BridgeConsistencyError(
+          `destination session ${ownSessionKey} holds incident state with startsAt ${ownDecoded.state.startsAt}, expected ${delivery.startsAt}`,
         );
       }
       const result = reduceAlertDelivery(ownDecoded.state, delivery);

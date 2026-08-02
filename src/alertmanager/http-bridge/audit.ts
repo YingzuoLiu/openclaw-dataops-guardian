@@ -11,6 +11,15 @@ import { appendJsonLineDurable } from "./json-store.js";
  */
 export type AuditEvent =
   | {
+      kind: "webhook_received";
+      at: string;
+      receiver: string;
+      groupStatus: "firing" | "resolved";
+      truncatedAlerts: number;
+      acceptedCount: number;
+      rejectedCount: number;
+    }
+  | {
       kind: "request_rejected";
       at: string;
       httpStatus: number;

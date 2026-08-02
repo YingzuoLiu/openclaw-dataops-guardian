@@ -113,9 +113,9 @@ function envelope(alerts, overrides = {}) {
   };
 }
 
-async function postWebhook({ body, headers = {}, retries = 0 } = {}) {
+async function postWebhook({ body, headers = {}, retries = 0, method = "POST" } = {}) {
   const requestInit = {
-    method: "POST",
+    method,
     headers: {
       authorization: `Bearer ${bridgeToken}`,
       "content-type": "application/json",
@@ -195,7 +195,14 @@ async function preflight() {
     `invalid envelope expected 400/unsupported_version, got ${JSON.stringify(invalidEnvelope)}`,
   );
 
-  console.log(JSON.stringify({ ok: true, phase, checks: 6 }));
+  // 7. Correct path, wrong method: 405, not 404.
+  const wrongMethod = await postWebhook({ method: "GET" });
+  assert(
+    wrongMethod.status === 405,
+    `wrong method on the correct path expected 405, got ${wrongMethod.status}`,
+  );
+
+  console.log(JSON.stringify({ ok: true, phase, checks: 7 }));
 }
 
 async function coreAndDefer() {
@@ -680,6 +687,56 @@ async function routeRegression() {
   console.log(JSON.stringify({ ok: true, phase }));
 }
 
+/**
+ * A successfully canonicalized webhook must produce a durable
+ * `webhook_received` audit record carrying only metadata (receiver,
+ * groupStatus, truncatedAlerts, accepted/rejected counts) — never the raw
+ * payload, groupKey, labels, annotations, or the bearer token. Uses a
+ * distinctive `truncatedAlerts` value so this phase's own record is
+ * unambiguous among any earlier phases' entries in the same audit.jsonl.
+ */
+async function truncatedAlertsAudit() {
+  const fingerprint = "fingerprint-http-bridge-proof-truncated";
+  const anchorMs = freshAnchorMs();
+  const t = (offsetMinutes) => anchorTimestamp(anchorMs, offsetMinutes);
+
+  const response = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt: t(0), endsAt: t(5) })], {
+        truncatedAlerts: 3,
+      }),
+    ),
+  });
+  assert(response.status === 200, `expected 200, got ${response.status}: ${JSON.stringify(response.json)}`);
+  assert(response.json.truncatedAlerts === 3, "response did not echo truncatedAlerts=3");
+
+  const auditPath = `${requireEnv("ALERTMANAGER_BRIDGE_STATE_DIR")}/audit.jsonl`;
+  const entries = readFileSync(auditPath, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line));
+  const matching = entries.filter(
+    (entry) => entry.kind === "webhook_received" && entry.truncatedAlerts === 3,
+  );
+  assert(matching.length > 0, "expected a webhook_received audit entry with truncatedAlerts=3");
+  const entry = matching[matching.length - 1];
+  assert(entry.receiver === "guardian", `expected receiver=guardian, got ${JSON.stringify(entry)}`);
+  assert(entry.groupStatus === "firing", `expected groupStatus=firing, got ${JSON.stringify(entry)}`);
+  assert(entry.acceptedCount === 1, `expected acceptedCount=1, got ${JSON.stringify(entry)}`);
+  assert(entry.rejectedCount === 0, `expected rejectedCount=0, got ${JSON.stringify(entry)}`);
+  const serialized = JSON.stringify(entry);
+  assert(
+    !("groupKey" in entry) &&
+      !("labels" in entry) &&
+      !("annotations" in entry) &&
+      !serialized.includes("PaymentSuccessRateLow") &&
+      !serialized.includes(bridgeToken),
+    `audit entry must not contain raw payload/groupKey/labels/annotations/token, got ${serialized}`,
+  );
+
+  console.log(JSON.stringify({ ok: true, phase }));
+}
+
 const phases = {
   preflight,
   "core-and-defer": coreAndDefer,
@@ -689,6 +746,7 @@ const phases = {
   "verify-replayed-occurrence": verifyReplayedOccurrence,
   "checkpoint-conflict": checkpointConflict,
   "route-regression": routeRegression,
+  "truncated-alerts-audit": truncatedAlertsAudit,
 };
 
 const handler = phases[phase];

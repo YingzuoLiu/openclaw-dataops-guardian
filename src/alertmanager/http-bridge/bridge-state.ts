@@ -1,5 +1,8 @@
-import type { DeferredAlertDeliveryCheckpoint } from "../ingestion.js";
-import type { AlertDelivery } from "../../state/incident-reducer.js";
+import {
+  computeDeferredAlertDeliveryCheckpointId,
+  type DeferredAlertDeliveryCheckpoint,
+} from "../ingestion.js";
+import { reduceAlertDelivery, type AlertDelivery } from "../../state/incident-reducer.js";
 import { incidentSessionKey } from "./gateway-incident-client.js";
 import {
   readJsonFileOrUndefined,
@@ -56,28 +59,56 @@ function isTimestamp(value: unknown): value is string {
   return typeof value === "string" && Number.isFinite(Date.parse(value));
 }
 
+/**
+ * Structural shape first (so `reduceAlertDelivery` below never sees a
+ * malformed object), then the delivery's own semantic contract — timestamp
+ * validity, `receivedAt >= startsAt`, `firing` requiring `endsAt: null`,
+ * `resolved` requiring a valid `endsAt >= startsAt` — is enforced by
+ * reusing `reduceAlertDelivery`'s own validation instead of re-implementing
+ * it here. `reduceAlertDelivery(undefined, value)` can only report
+ * `rejected` because of that delivery-level check (with `current`
+ * undefined, nothing else can reject it), so any non-`rejected` decision
+ * means the delivery passes the exact same contract the reducer itself
+ * enforces at runtime — avoiding a second, driftable copy of those rules.
+ */
 function isValidAlertDelivery(value: unknown): value is AlertDelivery {
-  return (
-    isRecord(value) &&
-    isNonEmptyString(value.alertId) &&
-    isNonEmptyString(value.fingerprint) &&
-    new Set(["firing", "resolved"]).has(value.alertStatus as string) &&
-    isTimestamp(value.startsAt) &&
-    (value.endsAt === null || isTimestamp(value.endsAt)) &&
-    isTimestamp(value.receivedAt) &&
-    isNonEmptyString(value.deliveryId)
-  );
+  if (
+    !isRecord(value) ||
+    !isNonEmptyString(value.alertId) ||
+    !isNonEmptyString(value.fingerprint) ||
+    !new Set(["firing", "resolved"]).has(value.alertStatus as string) ||
+    !isTimestamp(value.startsAt) ||
+    !(value.endsAt === null || isTimestamp(value.endsAt)) ||
+    !isTimestamp(value.receivedAt) ||
+    !isNonEmptyString(value.deliveryId)
+  ) {
+    return false;
+  }
+  return reduceAlertDelivery(undefined, value as AlertDelivery).decision !== "rejected";
 }
 
 function isDeferredCheckpoint(
   value: unknown,
 ): value is DeferredAlertDeliveryCheckpoint {
+  if (
+    !isRecord(value) ||
+    value.schemaVersion !== 1 ||
+    !isNonEmptyString(value.checkpointId) ||
+    !isNonEmptyString(value.blockedByOccurrenceId) ||
+    !isValidAlertDelivery(value.delivery)
+  ) {
+    return false;
+  }
+  // Recomputes the exact same deterministic id `planAlertDeliveryIngestion`
+  // uses (see `computeDeferredAlertDeliveryCheckpointId` in ingestion.ts) —
+  // a mismatch means the checkpoint was corrupted, hand-edited, or filed
+  // under the wrong blocking occurrence.
   return (
-    isRecord(value) &&
-    value.schemaVersion === 1 &&
-    isNonEmptyString(value.checkpointId) &&
-    isNonEmptyString(value.blockedByOccurrenceId) &&
-    isValidAlertDelivery(value.delivery)
+    value.checkpointId ===
+    computeDeferredAlertDeliveryCheckpointId(
+      value.blockedByOccurrenceId,
+      value.delivery.deliveryId,
+    )
   );
 }
 
@@ -114,16 +145,32 @@ export function decodeBridgeState(value: unknown): BridgeState {
         `bridge state file has a checkpoint filed under fingerprint ${fingerprint} whose delivery belongs to ${checkpoint.delivery.fingerprint}`,
       );
     }
-    // When a route also exists for this fingerprint, the checkpoint must be
-    // blocked by *that* route's occurrence — a mismatch means the route
-    // advanced (or the checkpoint was left over from a different occurrence)
-    // without the two being updated together.
+    // A checkpoint only ever exists because *some* active occurrence has a
+    // running remediation attempt blocking a newer delivery — there is
+    // always a route for the fingerprint at the time the checkpoint is
+    // created (see `hold_deferred_delivery` in `processor.ts`), and nothing
+    // ever removes a route while its checkpoint survives. A checkpoint with
+    // no route at all is therefore not "a fresh fingerprint with a held
+    // delivery" — it is corrupt (or the route was lost independently of the
+    // checkpoint) — and must not be treated as safe to route as a plain new
+    // occurrence: that would silently bypass the very remediation attempt
+    // `blockedByOccurrenceId` was recording.
     const route = value.routes[fingerprint];
-    if (
-      route !== undefined &&
-      isFingerprintRoute(route) &&
-      checkpoint.blockedByOccurrenceId !== route.occurrenceId
-    ) {
+    if (route === undefined) {
+      throw new Error(
+        `bridge state file has a checkpoint for fingerprint ${fingerprint} with no corresponding route`,
+      );
+    }
+    if (!isFingerprintRoute(route)) {
+      // Unreachable in practice: the route-validation loop above already
+      // throws for this fingerprint before this loop runs. Kept as an
+      // explicit failure (not a silent skip) for type-narrowing safety.
+      throw new Error(`bridge state file has an invalid route entry: ${fingerprint}`);
+    }
+    // The checkpoint must be blocked by *that* route's occurrence — a
+    // mismatch means the route advanced (or the checkpoint was left over
+    // from a different occurrence) without the two being updated together.
+    if (checkpoint.blockedByOccurrenceId !== route.occurrenceId) {
       throw new Error(
         `bridge state file has a checkpoint for fingerprint ${fingerprint} blocked by ${checkpoint.blockedByOccurrenceId}, but the route points at ${route.occurrenceId}`,
       );

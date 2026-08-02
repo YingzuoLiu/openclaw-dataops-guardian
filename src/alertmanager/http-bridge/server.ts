@@ -29,7 +29,7 @@ function sendJson(
   res: ServerResponse,
   status: number,
   body: unknown,
-  options: { closeConnection?: boolean } = {},
+  options: { closeConnection?: boolean; headers?: Record<string, string> } = {},
 ): void {
   const payload = JSON.stringify(body);
   if (!res.headersSent) {
@@ -37,6 +37,7 @@ function sendJson(
       "content-type": "application/json; charset=utf-8",
       "content-length": Buffer.byteLength(payload),
       ...(options.closeConnection ? { connection: "close" } : {}),
+      ...options.headers,
     });
   }
   res.end(payload);
@@ -108,8 +109,17 @@ async function handleRequest(
 ): Promise<void> {
   const requestAt = deps.now();
 
-  if (req.method !== "POST" || req.url !== ALERTMANAGER_WEBHOOK_PATH) {
+  if (req.url !== ALERTMANAGER_WEBHOOK_PATH) {
     sendJson(res, 404, { ok: false, error: "not_found" }, { closeConnection: true });
+    return;
+  }
+  if (req.method !== "POST") {
+    sendJson(
+      res,
+      405,
+      { ok: false, error: "method_not_allowed" },
+      { closeConnection: true, headers: { allow: "POST" } },
+    );
     return;
   }
 
@@ -180,6 +190,20 @@ async function handleRequest(
     sendJson(res, 400, { ok: false, error: "invalid_envelope", reason: canonical.reason });
     return;
   }
+
+  // Durable metadata-only record that this webhook was accepted at the
+  // envelope level, independent of how each individual alert is later
+  // routed. Deliberately excludes `groupKey` (it embeds label values, e.g.
+  // `{}:{alertname="X"}`), `labels`, `annotations`, and the raw payload.
+  deps.audit.record({
+    kind: "webhook_received",
+    at: receivedAt,
+    receiver: canonical.metadata.receiver,
+    groupStatus: canonical.metadata.groupStatus,
+    truncatedAlerts: canonical.metadata.truncatedAlerts,
+    acceptedCount: canonical.acceptedAlerts.length,
+    rejectedCount: canonical.rejectedAlerts.length,
+  });
 
   for (const rejected of canonical.rejectedAlerts) {
     deps.audit.record({

@@ -552,4 +552,116 @@ describe("consistency fail-closed checks", () => {
       /failed to decode/,
     );
   });
+
+  it("throws when the route's destination session holds a different fingerprint's state", async () => {
+    const { deps, gateway, bridgeState } = makeDeps();
+    const a = await processCanonicalAlertDelivery(
+      deps,
+      delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a" }),
+    );
+    const other = await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        fingerprint: "fingerprint-2",
+        startsAt: "2026-08-05T00:00:00.000Z",
+        receivedAt: "2026-08-05T00:01:00.000Z",
+        deliveryId: "delivery-other",
+      }),
+    );
+    const routeA = bridgeState.getRoute("fingerprint-1")!;
+    const otherSessionKey = incidentSessionKey(other.occurrenceId!);
+    // Corrupt fingerprint-1's route session to (wrongly) hold
+    // fingerprint-2's real, internally self-consistent state.
+    gateway.sessions.set(routeA.sessionKey, gateway.sessions.get(otherSessionKey)!);
+    expect(a.occurrenceId).not.toBe(other.occurrenceId);
+
+    await expect(
+      processCanonicalAlertDelivery(
+        deps,
+        delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a-dup" }),
+      ),
+    ).rejects.toThrow(/belongs to fingerprint/);
+  });
+
+  it("throws when the route's destination session holds a different occurrenceId's state", async () => {
+    const { deps, gateway, bridgeState } = makeDeps();
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a" }),
+    );
+    const routeA = bridgeState.getRoute("fingerprint-1")!;
+    const otherOccurrenceId = createIncidentOccurrenceId("fingerprint-1", "2026-09-01T00:00:00.000Z");
+    const swapped: IncidentState = {
+      ...gateway.sessions.get(routeA.sessionKey)!,
+      occurrenceId: otherOccurrenceId,
+      startsAt: "2026-09-01T00:00:00.000Z",
+      lastReceivedAt: "2026-09-01T00:01:00.000Z",
+      updatedAt: "2026-09-01T00:01:00.000Z",
+    };
+    // Same fingerprint, self-consistent, but not the occurrence the route
+    // claims to point at.
+    gateway.sessions.set(routeA.sessionKey, swapped);
+
+    await expect(
+      processCanonicalAlertDelivery(
+        deps,
+        delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a-dup" }),
+      ),
+    ).rejects.toThrow(/occurrenceId/);
+  });
+
+  it("throws when a delivery's own destination session holds a different fingerprint's state", async () => {
+    const { deps, gateway } = makeDeps();
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a" }),
+    );
+    const other = await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        fingerprint: "fingerprint-2",
+        startsAt: "2026-08-05T00:00:00.000Z",
+        receivedAt: "2026-08-05T00:01:00.000Z",
+        deliveryId: "delivery-other",
+      }),
+    );
+    const otherRealState = gateway.sessions.get(incidentSessionKey(other.occurrenceId!))!;
+
+    // fingerprint-1's own deterministic session for a brand new startsAt now
+    // (wrongly) holds fingerprint-2's real, self-consistent state.
+    const bStartsAt = "2026-08-06T00:00:00.000Z";
+    const bOccurrenceId = createIncidentOccurrenceId("fingerprint-1", bStartsAt);
+    gateway.sessions.set(incidentSessionKey(bOccurrenceId), otherRealState);
+
+    await expect(
+      processCanonicalAlertDelivery(deps, delivery({ startsAt: bStartsAt, deliveryId: "delivery-b" })),
+    ).rejects.toThrow(/fingerprint/);
+  });
+
+  it("throws when a delivery's own destination session holds a different occurrenceId's state", async () => {
+    const { deps, gateway } = makeDeps();
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({ startsAt: "2026-08-01T00:00:00.000Z", deliveryId: "delivery-a" }),
+    );
+    const c = await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        startsAt: "2026-08-10T00:00:00.000Z",
+        receivedAt: "2026-08-10T00:01:00.000Z",
+        deliveryId: "delivery-c",
+      }),
+    );
+    const cRealState = gateway.sessions.get(incidentSessionKey(c.occurrenceId!))!;
+
+    const bStartsAt = "2026-08-06T00:00:00.000Z";
+    const bOccurrenceId = createIncidentOccurrenceId("fingerprint-1", bStartsAt);
+    // Same fingerprint, self-consistent, but planted under a session key
+    // that deterministically belongs to a *different* occurrenceId.
+    gateway.sessions.set(incidentSessionKey(bOccurrenceId), cRealState);
+
+    await expect(
+      processCanonicalAlertDelivery(deps, delivery({ startsAt: bStartsAt, deliveryId: "delivery-b" })),
+    ).rejects.toThrow(/occurrenceId/);
+  });
 });

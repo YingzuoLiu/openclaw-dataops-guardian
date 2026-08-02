@@ -19,6 +19,7 @@ ALERTMANAGER_BRIDGE_TOKEN="$(
 export ALERTMANAGER_BRIDGE_TOKEN
 export ALERTMANAGER_BRIDGE_URL="http://127.0.0.1:${BRIDGE_PORT}"
 BRIDGE_STATE_DIR="$RUNTIME_DIR/bridge-state"
+export ALERTMANAGER_BRIDGE_STATE_DIR="$BRIDGE_STATE_DIR"
 FIXTURE_PATH="$RUNTIME_DIR/fixture.json"
 CRASH_BRIDGE_STATE_PATH="$RUNTIME_DIR/crash-bridge-state.json"
 CRASH_MARKER_PATH="$RUNTIME_DIR/crash-marker.json"
@@ -118,6 +119,12 @@ npm run build
 start_gateway "$RUNTIME_DIR/gateway-1.log"
 start_bridge "$RUNTIME_DIR/bridge-1.log"
 run_proof_phase preflight
+
+# --- A canonicalized webhook must leave a durable, metadata-only audit
+#     record (no raw payload/labels/annotations/token), visible even when
+#     Alertmanager truncated alerts out of the payload. ---
+run_proof_phase truncated-alerts-audit
+
 run_proof_phase core-and-defer
 
 # --- A second, differing deferred delivery for the same fingerprint must be
