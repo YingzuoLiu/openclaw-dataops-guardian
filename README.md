@@ -25,6 +25,9 @@ and supported-version policy are documented in [SECURITY.md](SECURITY.md).
   restart;
 - deterministic Alertmanager v4 payload canonicalization, bounded delivery
   deduplication, and fail-closed deferred-delivery planning;
+- a standalone, bearer-token-authenticated Alertmanager HTTP bridge with a
+  durable local checkpoint store, independent of OpenClaw plugin
+  registration;
 - a read-only Prometheus Tool whose endpoint remains administrator-owned;
 - durable Reducer, Tool-call, and bounded response gates for evidence-backed
   remediation proposals;
@@ -91,8 +94,14 @@ exactly one finite sample. See [the adapter contract](docs/prometheus-adapter.md
 
 Alertmanager webhook v4 canonicalization is implemented as a pure ingestion
 boundary. Webhook content can trigger incident routing but never counts as
-evidence, and this milestone does not yet expose an HTTP receiver. See the
-[Alertmanager ingestion contract](docs/alertmanager-ingestion.md).
+evidence. See the [Alertmanager ingestion contract](docs/alertmanager-ingestion.md).
+
+A standalone HTTP bridge now terminates real Alertmanager webhook traffic
+(loopback by default, bearer-token authenticated) and drives that ingestion
+boundary against a running Gateway, independent of OpenClaw plugin
+registration. It durably checkpoints deferred deliveries and never keeps a
+second copy of `IncidentState`. See the
+[Alertmanager HTTP bridge contract](docs/alertmanager-http-bridge.md).
 
 Run the isolated approved-path proof with:
 
@@ -107,6 +116,13 @@ Run the loader-backed hook registration proof with:
 
 ```bash
 npm run policy:proof
+```
+
+Run the Alertmanager HTTP bridge proof (isolated Gateway and bridge process,
+loopback only) with:
+
+```bash
+npm run alertmanager:http-bridge-proof
 ```
 
 Run the zero-cost real Gateway Agent invocation proof with:
