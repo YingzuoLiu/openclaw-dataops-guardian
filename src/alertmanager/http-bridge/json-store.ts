@@ -26,6 +26,44 @@ function writeFullySync(fd: number, data: string): void {
 }
 
 /**
+ * Fsyncs a directory so that entries created/removed/renamed within it (a
+ * new file appearing, a rename landing, a file disappearing) survive a
+ * crash — on POSIX, an `fsync` on the file itself does not guarantee the
+ * directory entry pointing at it is durable.
+ *
+ * Win32 has no equivalent: opening a directory with `fs.openSync` and
+ * fsyncing that descriptor fails with `EPERM` on Windows (directories
+ * aren't fsync-able the way POSIX allows), so this is skipped entirely
+ * there rather than attempted-and-ignored. This is a real, narrower
+ * durability guarantee than POSIX gets — see the docs for what that means
+ * in practice — not a workaround for a spurious error: the file's own
+ * fsync plus the same-directory atomic rename are still performed on every
+ * platform, and are what actually protects the file's contents.
+ *
+ * On POSIX, a directory fsync failure is a genuine durability problem and
+ * is left to throw — it must never be silently swallowed.
+ *
+ * `platform` defaults to `process.platform` and exists only so tests can
+ * exercise both branches deterministically on whatever OS actually runs
+ * them, without mocking `node:fs` itself — production callers always use
+ * the default.
+ */
+export function fsyncDirectoryIfSupported(
+  dir: string,
+  platform: NodeJS.Platform = process.platform,
+): void {
+  if (platform === "win32") {
+    return;
+  }
+  const dirFd = openSync(dir, "r");
+  try {
+    fsyncSync(dirFd);
+  } finally {
+    closeSync(dirFd);
+  }
+}
+
+/**
  * Durably writes JSON to `path`: write to a sibling temp file, fsync the temp
  * file's contents, rename over the destination (atomic on the same
  * filesystem), then fsync the containing directory so the rename itself
@@ -46,13 +84,7 @@ export function writeJsonFileDurable(path: string, value: unknown): void {
   }
 
   renameSync(tmpPath, path);
-
-  const dirFd = openSync(dir, "r");
-  try {
-    fsyncSync(dirFd);
-  } finally {
-    closeSync(dirFd);
-  }
+  fsyncDirectoryIfSupported(dir);
 }
 
 /**
@@ -80,12 +112,7 @@ export function appendJsonLineDurable(path: string, value: unknown): void {
   }
 
   if (isNewFile) {
-    const dirFd = openSync(dir, "r");
-    try {
-      fsyncSync(dirFd);
-    } finally {
-      closeSync(dirFd);
-    }
+    fsyncDirectoryIfSupported(dir);
   }
 }
 
@@ -104,11 +131,13 @@ export function readJsonFileOrUndefined(path: string): unknown {
 }
 
 /**
- * Removes `path` if present. Not finding the file is treated as success so
- * that a checkpoint-deletion retry after a crash is idempotent.
+ * Removes `path` if present, fsyncing the containing directory afterward so
+ * the removal itself survives a crash. Not finding the file is treated as
+ * success so that a checkpoint-deletion retry after a crash is idempotent.
  */
 export function deleteFileIfPresent(path: string): void {
   if (existsSync(path)) {
     unlinkSync(path);
+    fsyncDirectoryIfSupported(dirname(path));
   }
 }

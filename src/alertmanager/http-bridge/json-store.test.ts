@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   appendJsonLineDurable,
   deleteFileIfPresent,
+  fsyncDirectoryIfSupported,
   readJsonFileOrUndefined,
   writeJsonFileDurable,
 } from "./json-store.js";
@@ -64,6 +65,35 @@ describe("deleteFileIfPresent", () => {
 
   it("is a no-op when the file does not exist", () => {
     expect(() => deleteFileIfPresent(join(dir, "missing.json"))).not.toThrow();
+  });
+});
+
+describe("fsyncDirectoryIfSupported", () => {
+  // A nonexistent path makes `openSync` throw regardless of platform; using
+  // it lets these tests prove the win32/POSIX branches deterministically on
+  // whatever OS actually runs them, without mocking `node:fs` itself: the
+  // win32 branch must never even attempt the open (so it never throws),
+  // while every POSIX-like platform must attempt it and let the failure
+  // propagate. `dir` is only assigned in `beforeEach`, so the missing path
+  // built from it is computed per-test rather than at collection time.
+
+  it("skips the directory fsync entirely on win32, even for a directory that doesn't exist", () => {
+    expect(() =>
+      fsyncDirectoryIfSupported(join(dir, "does-not-exist"), "win32"),
+    ).not.toThrow();
+  });
+
+  it("fsyncs an existing directory without throwing on POSIX-like platforms", () => {
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(() => fsyncDirectoryIfSupported(dir, platform)).not.toThrow();
+    }
+  });
+
+  it("propagates a directory fsync failure on POSIX-like platforms", () => {
+    const missingDir = join(dir, "does-not-exist");
+    for (const platform of ["linux", "darwin"] as const) {
+      expect(() => fsyncDirectoryIfSupported(missingDir, platform)).toThrow();
+    }
   });
 });
 

@@ -287,8 +287,26 @@ running the bridge alongside another process that patches the same
 - **Bridge state is versioned JSON, written durably.**
   `src/alertmanager/http-bridge/json-store.ts` writes to a sibling temp file,
   `fsync`s it, `rename`s it over the destination (atomic on the same
-  filesystem), then `fsync`s the containing directory. A reader can never
+  filesystem), then fsyncs the containing directory. A reader can never
   observe a partially written `bridge-state.json`.
+  **Platform note:** the containing-directory fsync
+  (`fsyncDirectoryIfSupported`) is a POSIX-only step. On Linux/macOS it is
+  mandatory and any failure propagates — a directory fsync error there is a
+  genuine durability problem, never silently swallowed. On Windows,
+  `fs.openSync`-ing a directory and fsyncing that descriptor fails with
+  `EPERM` (Win32 does not support it the way POSIX does), so this step is
+  skipped outright there — never attempted-and-ignored — based on
+  `process.platform === "win32"`, not by catching whatever error the
+  attempt happens to produce. The file's own contents remain fully durable
+  on every platform (temp-file write, `fsync`, close, then a same-directory
+  atomic rename), and the same helper backs `deleteFileIfPresent` and the
+  first-creation fsync in `appendJsonLineDurable` below. What Windows loses
+  relative to POSIX is narrower: the directory entry for a brand-new file,
+  or for a rename/delete, is not independently forced to disk, so in an
+  actual power-loss (not just a process crash) that entry could in principle
+  still be lost even though the file's own contents, once linked, cannot be
+  torn. This bridge does not claim Windows has the identical guarantee POSIX
+  gets here.
 - **A deferred checkpoint is durable before the HTTP response.**
   `processCanonicalAlertDelivery` calls `BridgeStateStore.setCheckpoint`
   (a synchronous durable flush) before returning to the HTTP handler, which
