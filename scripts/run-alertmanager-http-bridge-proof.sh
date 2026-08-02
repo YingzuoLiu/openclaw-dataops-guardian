@@ -136,6 +136,12 @@ run_proof_phase checkpoint-conflict
 #     active one must never move the route backward, whether firing or
 #     resolved. ---
 run_proof_phase route-regression
+
+# --- A delivery that loses a receivedAt ordering race against a concurrent
+#     request for the same fingerprint must fail closed (503), never be
+#     silently confirmed away inside a 2xx; a retry after the transient
+#     condition clears must succeed. ---
+run_proof_phase delivery-ordering-conflict
 stop_bridge
 
 # --- Bridge instance #2: restart while the checkpoint's blocking attempt is

@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 
 import { createIncidentOccurrenceId, readIncidentStateV3 } from "../dist/state/incident-state.js";
 import { beginRemediationAttempt } from "../dist/state/incident-workflow.js";
-import { planAlertDeliveryIngestion } from "../dist/alertmanager/ingestion.js";
+import {
+  createAlertmanagerDeliveryId,
+  planAlertDeliveryIngestion,
+} from "../dist/alertmanager/ingestion.js";
 import {
   GatewayIncidentClient,
   incidentSessionKey,
@@ -73,6 +76,16 @@ const sessionKey = incidentSessionKey(occurrenceId);
 const heldOccurrenceId = createIncidentOccurrenceId(fingerprint, heldStartsAt);
 const heldSessionKey = incidentSessionKey(heldOccurrenceId);
 
+// `BridgeStateStore` revalidates a checkpoint's held delivery against this
+// same hash on every load, so the fixture must use the real computed value
+// rather than an arbitrary literal.
+const heldDeliveryId = createAlertmanagerDeliveryId({
+  alertStatus: "firing",
+  fingerprint,
+  startsAt: heldStartsAt,
+  endsAt: null,
+});
+
 async function connectGateway() {
   const client = new GatewayIncidentClient({
     url: gatewayUrl,
@@ -124,7 +137,7 @@ async function crash() {
     startsAt: heldStartsAt,
     endsAt: null,
     receivedAt: new Date(anchorMs + 61 * 60_000).toISOString(),
-    deliveryId: "crash-proof-delivery-2",
+    deliveryId: heldDeliveryId,
   };
   const deferredPlan = planAlertDeliveryIngestion(started.state, heldDelivery);
   assert(deferredPlan.action === "hold_deferred_delivery", "delivery was not deferred");
@@ -207,7 +220,7 @@ async function recover() {
   const preDrainHeldDecoded = readIncidentStateV3(preDrainHeldValue);
   assert(preDrainHeldDecoded.ok, "destination write did not survive the crash");
   assert(
-    preDrainHeldDecoded.state.recentDeliveryIds.includes("crash-proof-delivery-2"),
+    preDrainHeldDecoded.state.recentDeliveryIds.includes(heldDeliveryId),
     "destination state is missing the replayed delivery",
   );
   // The pre-crash external advance must also have survived the crash itself

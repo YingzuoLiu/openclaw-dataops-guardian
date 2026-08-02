@@ -688,6 +688,145 @@ async function routeRegression() {
 }
 
 /**
+ * `receivedAt` is stamped once per HTTP attempt, before the fingerprint's
+ * serialization lock is acquired, so two concurrent requests for the same
+ * fingerprint can reach the reducer out of receivedAt order. This proof
+ * cannot reliably force a real network race deterministically, so it
+ * reproduces the exact same observable condition the reducer itself
+ * detects (`received_at_regression`) by directly advancing the occurrence's
+ * `lastReceivedAt` past what a real "losing" request would stamp — from the
+ * bridge's point of view this is indistinguishable from having actually
+ * lost the race. Asserts the "losing" delivery gets `503`, is never
+ * recorded, and that a retry after the transient condition clears succeeds.
+ */
+async function deliveryOrderingConflict() {
+  const fingerprint = "fingerprint-http-bridge-proof-ordering";
+  const anchorMs = freshAnchorMs();
+  const startsAt = anchorTimestamp(anchorMs, 0);
+
+  const created = await postWebhook({
+    body: JSON.stringify(
+      envelope([webhookAlert({ fingerprint, startsAt, endsAt: anchorTimestamp(anchorMs, 5) })]),
+    ),
+  });
+  assert(
+    created.status === 200 && created.json.results[0].disposition === "created",
+    `expected created, got ${JSON.stringify(created.json)}`,
+  );
+  const occurrenceId = createIncidentOccurrenceId(fingerprint, startsAt);
+  const sessionKey = incidentSessionKey(occurrenceId);
+
+  const advancedLastReceivedAt = realNowPlusSeconds(120);
+  const gateway = await connectGatewayClient();
+  try {
+    const currentValue = await gateway.describeIncidentState(sessionKey);
+    const decoded = readIncidentStateV3(currentValue);
+    assert(decoded.ok, `occurrence state failed to decode: ${JSON.stringify(decoded)}`);
+    // Simulates a concurrent request for this fingerprint having already
+    // advanced the clock further than this next delivery's own receivedAt
+    // will land — exactly the condition a genuinely losing race produces.
+    await gateway.persistIncidentState(sessionKey, {
+      ...decoded.state,
+      lastReceivedAt: advancedLastReceivedAt,
+      updatedAt: advancedLastReceivedAt,
+    });
+  } finally {
+    await gateway.close();
+  }
+
+  const losing = await postWebhook({
+    body: JSON.stringify(
+      envelope([
+        webhookAlert({ fingerprint, startsAt, endsAt: anchorTimestamp(anchorMs, 5) }),
+      ]),
+    ),
+  });
+  assert(
+    losing.status === 503,
+    `expected 503 for a delivery that lost the receivedAt race, got ${losing.status}: ${JSON.stringify(losing.json)}`,
+  );
+  assert(
+    losing.json.error === "delivery_ordering_conflict",
+    `expected delivery_ordering_conflict error code, got ${JSON.stringify(losing.json)}`,
+  );
+
+  const gateway2 = await connectGatewayClient();
+  let deliveryCountAfterLoss;
+  try {
+    const value = await gateway2.describeIncidentState(sessionKey);
+    const decoded = readIncidentStateV3(value);
+    assert(decoded.ok, "occurrence state failed to decode after the rejected delivery");
+    // The losing delivery must never have been recorded — it was not
+    // silently confirmed away inside a 2xx.
+    deliveryCountAfterLoss = decoded.state.deliveryCount;
+    assert(
+      decoded.state.lastReceivedAt === advancedLastReceivedAt,
+      "the rejected delivery must not have changed lastReceivedAt",
+    );
+  } finally {
+    await gateway2.close();
+  }
+
+  // The transient condition clears (real time catching up, or — as
+  // simulated here — the concurrent winner's effect settling), and a retry
+  // of the exact same delivery must now succeed rather than being
+  // permanently lost.
+  const gateway3 = await connectGatewayClient();
+  try {
+    const value = await gateway3.describeIncidentState(sessionKey);
+    const decoded = readIncidentStateV3(value);
+    assert(decoded.ok, "occurrence state failed to decode before retry");
+    await gateway3.persistIncidentState(sessionKey, {
+      ...decoded.state,
+      lastReceivedAt: anchorTimestamp(anchorMs, 1),
+      updatedAt: anchorTimestamp(anchorMs, 1),
+    });
+  } finally {
+    await gateway3.close();
+  }
+
+  const retried = await postWebhook({
+    body: JSON.stringify(
+      envelope([
+        webhookAlert({ fingerprint, startsAt, endsAt: anchorTimestamp(anchorMs, 5) }),
+      ]),
+    ),
+  });
+  assert(
+    retried.status === 200,
+    `expected the retry to succeed once the transient condition cleared, got ${retried.status}: ${JSON.stringify(retried.json)}`,
+  );
+  // This retry resends the exact same canonical content as the original
+  // `created` delivery (same fingerprint/status/startsAt/endsAt), so its
+  // deliveryId is identical and the reducer's dedup check makes "duplicate"
+  // the deterministic outcome here — the delivery was never actually lost
+  // (the original `created` call already recorded it), so redelivering it
+  // safely dedupes rather than double-applying. Either "duplicate" or
+  // "updated" is an acceptable proof that the delivery is not permanently
+  // stuck behind the 503: what must never happen is the retry itself being
+  // rejected again.
+  assert(
+    ["duplicate", "updated"].includes(retried.json.results[0].disposition),
+    `expected the retry to be recorded (duplicate or updated), got ${JSON.stringify(retried.json.results[0])}`,
+  );
+
+  const gateway4 = await connectGatewayClient();
+  try {
+    const value = await gateway4.describeIncidentState(sessionKey);
+    const decoded = readIncidentStateV3(value);
+    assert(decoded.ok, "occurrence state failed to decode after retry");
+    assert(
+      decoded.state.deliveryCount === deliveryCountAfterLoss + 1,
+      "the retried delivery should be recorded exactly once, not lost and not double-counted",
+    );
+  } finally {
+    await gateway4.close();
+  }
+
+  console.log(JSON.stringify({ ok: true, phase }));
+}
+
+/**
  * A successfully canonicalized webhook must produce a durable
  * `webhook_received` audit record carrying only metadata (receiver,
  * groupStatus, truncatedAlerts, accepted/rejected counts) — never the raw
@@ -747,6 +886,7 @@ const phases = {
   "checkpoint-conflict": checkpointConflict,
   "route-regression": routeRegression,
   "truncated-alerts-audit": truncatedAlertsAudit,
+  "delivery-ordering-conflict": deliveryOrderingConflict,
 };
 
 const handler = phases[phase];

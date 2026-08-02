@@ -63,7 +63,7 @@ export type AuditEvent =
       at: string;
       fingerprint: string;
       deliveryId: string;
-      errorType: "consistency" | "checkpoint_conflict";
+      errorType: "consistency" | "checkpoint_conflict" | "ordering";
       message: string;
     };
 

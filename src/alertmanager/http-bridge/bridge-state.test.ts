@@ -4,9 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { BridgeStateStore, decodeBridgeState } from "./bridge-state.js";
-import { computeDeferredAlertDeliveryCheckpointId } from "../ingestion.js";
+import { computeDeferredAlertDeliveryCheckpointId, createAlertmanagerDeliveryId } from "../ingestion.js";
 import type { DeferredAlertDeliveryCheckpoint } from "../ingestion.js";
 import { incidentSessionKey } from "./gateway-incident-client.js";
+import { readJsonFileOrUndefined, writeJsonFileDurable } from "./json-store.js";
 
 let dir: string;
 let path: string;
@@ -35,7 +36,12 @@ function checkpoint(
     startsAt: "2026-08-01T01:00:00.000Z",
     endsAt: null,
     receivedAt: "2026-08-01T01:00:01.000Z",
-    deliveryId: "delivery-next",
+    deliveryId: createAlertmanagerDeliveryId({
+      alertStatus: "firing",
+      fingerprint: "fingerprint-1",
+      startsAt: "2026-08-01T01:00:00.000Z",
+      endsAt: null,
+    }),
   };
   return {
     schemaVersion: 1,
@@ -165,6 +171,32 @@ describe("decodeBridgeState", () => {
       }),
     ).toThrow();
   });
+
+  it("rejects a checkpoint whose delivery fields were tampered with but keeps the original (now-stale) deliveryId", () => {
+    // The deliveryId is a hash of alertStatus/fingerprint/startsAt/endsAt.
+    // If any of those fields is altered on disk without recomputing
+    // deliveryId, the checkpoint must never decode successfully — that
+    // would let a tampered or corrupted delivery silently replace the one
+    // that was actually acknowledged over HTTP.
+    const original = checkpoint();
+    for (const tamperedFields of [
+      { startsAt: "2026-08-01T02:00:00.000Z" },
+      { alertStatus: "resolved" as const, endsAt: "2026-08-01T03:00:00.000Z" },
+      { endsAt: "2026-08-01T04:00:00.000Z" },
+    ]) {
+      const tampered = {
+        ...original,
+        delivery: { ...original.delivery, ...tamperedFields },
+      };
+      expect(() =>
+        decodeBridgeState({
+          schemaVersion: 1,
+          routes: { "fingerprint-1": routeFor(tampered.blockedByOccurrenceId) },
+          checkpoints: { "fingerprint-1": tampered },
+        }),
+      ).toThrow();
+    }
+  });
 });
 
 describe("BridgeStateStore", () => {
@@ -216,7 +248,9 @@ describe("BridgeStateStore", () => {
 
   it("deleteCheckpoint is idempotent", () => {
     const store = new BridgeStateStore(path);
-    store.setCheckpoint("fingerprint-1", checkpoint());
+    const cp = checkpoint();
+    store.setRoute("fingerprint-1", routeFor(cp.blockedByOccurrenceId));
+    store.setCheckpoint("fingerprint-1", cp);
     store.deleteCheckpoint("fingerprint-1");
     expect(() => store.deleteCheckpoint("fingerprint-1")).not.toThrow();
     expect(store.getCheckpoint("fingerprint-1")).toBeUndefined();
@@ -225,6 +259,37 @@ describe("BridgeStateStore", () => {
   it("throws when the state file on disk is invalid JSON", () => {
     writeFileSync(path, "{ not json", "utf8");
     expect(() => new BridgeStateStore(path)).toThrow();
+  });
+
+  it("keeps in-memory state unchanged when the durable write fails, and durably writes on retry", () => {
+    let shouldFail = true;
+    let writeCount = 0;
+    const store = new BridgeStateStore(path, (writePath, value) => {
+      writeCount += 1;
+      if (shouldFail) {
+        throw new Error("simulated disk failure");
+      }
+      writeJsonFileDurable(writePath, value);
+    });
+
+    expect(() => store.setRoute("fingerprint-1", routeFor("occurrence-1"))).toThrow(
+      /simulated disk failure/,
+    );
+    // The failed write must not have been committed to memory, and nothing
+    // durable exists yet — a caller must not be able to observe a route
+    // that was never actually persisted.
+    expect(store.getRoute("fingerprint-1")).toBeUndefined();
+    expect(readJsonFileOrUndefined(path)).toBeUndefined();
+
+    shouldFail = false;
+    store.setRoute("fingerprint-1", routeFor("occurrence-1"));
+    expect(writeCount).toBe(2);
+    expect(store.getRoute("fingerprint-1")).toEqual(routeFor("occurrence-1"));
+
+    // The retry must have performed a real durable write, not merely
+    // reused whatever the failed attempt held in memory.
+    const reloaded = new BridgeStateStore(path);
+    expect(reloaded.getRoute("fingerprint-1")).toEqual(routeFor("occurrence-1"));
   });
 
   it("refuses to start from an existing-but-empty state file rather than treating it as fresh", () => {

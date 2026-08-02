@@ -126,7 +126,13 @@ function isStringMap(value: unknown): value is Record<string, string> {
   );
 }
 
-function canonicalTimestamp(value: unknown): string | undefined {
+/**
+ * Exported so callers that revalidate already-canonicalized data (the
+ * bridge's checkpoint decoder, on load) can require the exact same
+ * normalized-ISO-string form this boundary itself produces, instead of a
+ * separately maintained notion of "canonical enough".
+ */
+export function canonicalTimestamp(value: unknown): string | undefined {
   if (
     typeof value !== "string" ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
@@ -168,8 +174,12 @@ function stableJson(value: unknown): string {
  * validated fixed timestamp for resolved) distinguish the firing
  * announcement from the resolution: they must never collide, since the
  * reducer treats them as different lifecycle transitions.
+ *
+ * Exported so callers that revalidate an already-canonicalized delivery
+ * (the bridge's checkpoint decoder, on load) can recompute this exact
+ * identity instead of maintaining a second, driftable copy of the formula.
  */
-function createAlertmanagerDeliveryId(input: {
+export function createAlertmanagerDeliveryId(input: {
   alertStatus: "firing" | "resolved";
   fingerprint: string;
   startsAt: string;

@@ -6,6 +6,7 @@ import { createIncidentOccurrenceId, type IncidentState } from "../../state/inci
 import type { DeferredAlertDeliveryCheckpoint } from "../ingestion.js";
 import type { AuditEvent } from "./audit.js";
 import type { FingerprintRoute } from "./bridge-state.js";
+import { DeliveryOrderingError } from "./errors.js";
 import { incidentSessionKey } from "./gateway-incident-client.js";
 import {
   drainPendingCheckpoint,
@@ -663,5 +664,68 @@ describe("consistency fail-closed checks", () => {
     await expect(
       processCanonicalAlertDelivery(deps, delivery({ startsAt: bStartsAt, deliveryId: "delivery-b" })),
     ).rejects.toThrow(/occurrenceId/);
+  });
+});
+
+describe("delivery ordering (received_at_regression)", () => {
+  // `receivedAt` is stamped once per HTTP attempt, before the per-fingerprint
+  // lock is acquired (see server.ts), so two concurrent requests for the
+  // same fingerprint can reach the reducer out of receivedAt order. A
+  // resulting `received_at_regression` must fail closed (throw) rather than
+  // ride inside an ordinary 2xx/207 "rejected" result, which would let
+  // Alertmanager treat a delivery that merely lost a benign race as
+  // permanently, successfully delivered.
+  it("throws DeliveryOrderingError instead of returning an ordinary rejected disposition (same occurrence)", async () => {
+    const { deps } = makeDeps();
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({ receivedAt: "2026-08-01T00:02:00.000Z", deliveryId: "delivery-1" }),
+    );
+    // A second delivery for the same occurrence whose receivedAt is *older*
+    // than what was just applied simulates the race directly.
+    await expect(
+      processCanonicalAlertDelivery(
+        deps,
+        delivery({ deliveryId: "delivery-late", receivedAt: "2026-08-01T00:00:30.000Z" }),
+      ),
+    ).rejects.toThrow(DeliveryOrderingError);
+  });
+
+  it("throws DeliveryOrderingError for a regression against a historical (non-active) occurrence too", async () => {
+    const { deps, bridgeState } = makeDeps();
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        startsAt: "2026-08-01T00:00:00.000Z",
+        receivedAt: "2026-08-01T00:05:00.000Z",
+        deliveryId: "delivery-a",
+      }),
+    );
+    // B firing makes A historical (route moves to B; A is untouched but no
+    // longer active).
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        startsAt: "2026-08-02T00:00:00.000Z",
+        receivedAt: "2026-08-02T00:00:01.000Z",
+        deliveryId: "delivery-b",
+      }),
+    );
+    expect(bridgeState.getRoute("fingerprint-1")?.occurrenceId).not.toBe(
+      createIncidentOccurrenceId("fingerprint-1", "2026-08-01T00:00:00.000Z"),
+    );
+
+    // A further delayed delivery for A, older than A's own lastReceivedAt,
+    // is handled by the own-occurrence (Phase 1) path.
+    await expect(
+      processCanonicalAlertDelivery(
+        deps,
+        delivery({
+          startsAt: "2026-08-01T00:00:00.000Z",
+          receivedAt: "2026-08-01T00:01:00.000Z",
+          deliveryId: "delivery-a-late",
+        }),
+      ),
+    ).rejects.toThrow(DeliveryOrderingError);
   });
 });

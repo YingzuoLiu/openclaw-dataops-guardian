@@ -1,5 +1,7 @@
 import {
+  canonicalTimestamp,
   computeDeferredAlertDeliveryCheckpointId,
+  createAlertmanagerDeliveryId,
   type DeferredAlertDeliveryCheckpoint,
 } from "../ingestion.js";
 import { reduceAlertDelivery, type AlertDelivery } from "../../state/incident-reducer.js";
@@ -55,21 +57,33 @@ function isFingerprintRoute(value: unknown): value is FingerprintRoute {
   );
 }
 
-function isTimestamp(value: unknown): value is string {
-  return typeof value === "string" && Number.isFinite(Date.parse(value));
+/**
+ * Requires the value to be *exactly* the normalized ISO string
+ * `canonicalTimestamp` (ingestion.ts) itself would produce — not merely
+ * something `Date.parse` accepts. `createAlertmanagerDeliveryId` hashes the
+ * raw string, so a persisted timestamp that is valid-but-not-canonical
+ * (e.g. `+00:00` instead of `Z`) would silently compute a different
+ * deliveryId than `canonicalizeAlertmanagerWebhook` ever would have — this
+ * is what makes the deliveryId recomputation below meaningful rather than
+ * incidentally passable by a differently-formatted-but-equivalent string.
+ */
+function isCanonicalTimestamp(value: unknown): value is string {
+  return typeof value === "string" && canonicalTimestamp(value) === value;
 }
 
 /**
- * Structural shape first (so `reduceAlertDelivery` below never sees a
- * malformed object), then the delivery's own semantic contract — timestamp
- * validity, `receivedAt >= startsAt`, `firing` requiring `endsAt: null`,
- * `resolved` requiring a valid `endsAt >= startsAt` — is enforced by
- * reusing `reduceAlertDelivery`'s own validation instead of re-implementing
- * it here. `reduceAlertDelivery(undefined, value)` can only report
- * `rejected` because of that delivery-level check (with `current`
- * undefined, nothing else can reject it), so any non-`rejected` decision
- * means the delivery passes the exact same contract the reducer itself
- * enforces at runtime — avoiding a second, driftable copy of those rules.
+ * Structural shape and canonical-timestamp form first (so
+ * `reduceAlertDelivery` below never sees a malformed object, and so the
+ * deliveryId recomputation in `isDeferredCheckpoint` is meaningful), then
+ * the delivery's own semantic contract — `receivedAt >= startsAt`, `firing`
+ * requiring `endsAt: null`, `resolved` requiring a valid `endsAt >=
+ * startsAt` — is enforced by reusing `reduceAlertDelivery`'s own validation
+ * instead of re-implementing it here. `reduceAlertDelivery(undefined,
+ * value)` can only report `rejected` because of that delivery-level check
+ * (with `current` undefined, nothing else can reject it), so any
+ * non-`rejected` decision means the delivery passes the exact same
+ * contract the reducer itself enforces at runtime — avoiding a second,
+ * driftable copy of those rules.
  */
 function isValidAlertDelivery(value: unknown): value is AlertDelivery {
   if (
@@ -77,14 +91,32 @@ function isValidAlertDelivery(value: unknown): value is AlertDelivery {
     !isNonEmptyString(value.alertId) ||
     !isNonEmptyString(value.fingerprint) ||
     !new Set(["firing", "resolved"]).has(value.alertStatus as string) ||
-    !isTimestamp(value.startsAt) ||
-    !(value.endsAt === null || isTimestamp(value.endsAt)) ||
-    !isTimestamp(value.receivedAt) ||
+    !isCanonicalTimestamp(value.startsAt) ||
+    !(value.endsAt === null || isCanonicalTimestamp(value.endsAt)) ||
+    !isCanonicalTimestamp(value.receivedAt) ||
     !isNonEmptyString(value.deliveryId)
   ) {
     return false;
   }
-  return reduceAlertDelivery(undefined, value as AlertDelivery).decision !== "rejected";
+  if (reduceAlertDelivery(undefined, value as AlertDelivery).decision === "rejected") {
+    return false;
+  }
+  // Recomputes the exact same deterministic Alertmanager delivery identity
+  // `canonicalizeAlertmanagerWebhook` uses (see `createAlertmanagerDeliveryId`
+  // in ingestion.ts) from the delivery's own fingerprint/alertStatus/
+  // startsAt/endsAt. A mismatch means `deliveryId` does not actually
+  // correspond to the rest of the delivery — tampering, corruption, or a
+  // stale value left over from an edit — and the dedup/checkpoint-conflict
+  // logic that keys on `deliveryId` must not trust it.
+  return (
+    value.deliveryId ===
+    createAlertmanagerDeliveryId({
+      alertStatus: value.alertStatus as "firing" | "resolved",
+      fingerprint: value.fingerprint as string,
+      startsAt: value.startsAt as string,
+      endsAt: value.endsAt as string | null,
+    })
+  );
 }
 
 function isDeferredCheckpoint(
@@ -179,20 +211,34 @@ export function decodeBridgeState(value: unknown): BridgeState {
   return value as unknown as BridgeState;
 }
 
+export type BridgeStateWriter = (path: string, value: unknown) => void;
+
 /**
  * Loads and mutates bridge state entirely in memory, flushing the full file
- * durably on every mutation. Mutations are synchronous end-to-end (no
- * `await` between reading the in-memory object and calling
- * `writeJsonFileDurable`), so concurrent async request handling for
- * *different* fingerprints can never interleave mid-mutation: Node's
- * run-to-completion semantics make each `mutate*` call an atomic step from
+ * durably on every mutation. Every mutator follows the same sequence:
+ * build the candidate `nextState`, validate it with `decodeBridgeState`
+ * (catching an internal bug before it ever reaches disk), durably write
+ * it, and only *then* assign `this.state = nextState`. If the durable
+ * write throws — full disk, permission error, anything — `this.state` is
+ * left exactly as it was: a caller that sees the mutator throw can rely on
+ * every subsequent `getRoute`/`getCheckpoint` call still reflecting only
+ * what is actually on disk, never a value that was merely held in memory.
+ * `writer` defaults to the real durable file writer and is injectable so
+ * tests can simulate a write failure without touching a real filesystem.
+ *
+ * Mutations are synchronous end-to-end (no `await` between building
+ * `nextState` and calling `writer`), so concurrent async request handling
+ * for *different* fingerprints can never interleave mid-mutation: Node's
+ * run-to-completion semantics make each mutator call an atomic step from
  * the event loop's point of view. Per-fingerprint ordering is still the
  * caller's responsibility (see `fingerprint-lock.ts`).
  */
 export class BridgeStateStore {
   private state: BridgeState;
+  private readonly writer: BridgeStateWriter;
 
-  constructor(private readonly path: string) {
+  constructor(private readonly path: string, writer: BridgeStateWriter = writeJsonFileDurable) {
+    this.writer = writer;
     this.state = decodeBridgeState(readJsonFileOrUndefined(path));
   }
 
@@ -209,22 +255,20 @@ export class BridgeStateStore {
   }
 
   setRoute(fingerprint: string, route: FingerprintRoute): void {
-    this.state = {
+    this.commit({
       ...this.state,
       routes: { ...this.state.routes, [fingerprint]: route },
-    };
-    this.flush();
+    });
   }
 
   setCheckpoint(
     fingerprint: string,
     checkpoint: DeferredAlertDeliveryCheckpoint,
   ): void {
-    this.state = {
+    this.commit({
       ...this.state,
       checkpoints: { ...this.state.checkpoints, [fingerprint]: checkpoint },
-    };
-    this.flush();
+    });
   }
 
   /**
@@ -239,12 +283,11 @@ export class BridgeStateStore {
   ): void {
     const { [fingerprint]: _removed, ...remainingCheckpoints } =
       this.state.checkpoints;
-    this.state = {
+    this.commit({
       ...this.state,
       routes: { ...this.state.routes, [fingerprint]: route },
       checkpoints: remainingCheckpoints,
-    };
-    this.flush();
+    });
   }
 
   deleteCheckpoint(fingerprint: string): void {
@@ -253,11 +296,12 @@ export class BridgeStateStore {
     }
     const { [fingerprint]: _removed, ...remainingCheckpoints } =
       this.state.checkpoints;
-    this.state = { ...this.state, checkpoints: remainingCheckpoints };
-    this.flush();
+    this.commit({ ...this.state, checkpoints: remainingCheckpoints });
   }
 
-  private flush(): void {
-    writeJsonFileDurable(this.path, this.state);
+  private commit(nextState: BridgeState): void {
+    decodeBridgeState(nextState);
+    this.writer(this.path, nextState);
+    this.state = nextState;
   }
 }

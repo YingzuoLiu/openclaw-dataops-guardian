@@ -13,6 +13,19 @@ import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 
 /**
+ * `fs.writeSync` is not guaranteed to write the entire buffer in one call
+ * (short writes are permitted by the underlying syscall, e.g. when a signal
+ * interrupts it). Loop until every byte has actually been written.
+ */
+function writeFullySync(fd: number, data: string): void {
+  const buffer = Buffer.from(data, "utf8");
+  let offset = 0;
+  while (offset < buffer.length) {
+    offset += writeSync(fd, buffer, offset, buffer.length - offset);
+  }
+}
+
+/**
  * Durably writes JSON to `path`: write to a sibling temp file, fsync the temp
  * file's contents, rename over the destination (atomic on the same
  * filesystem), then fsync the containing directory so the rename itself
@@ -26,7 +39,7 @@ export function writeJsonFileDurable(path: string, value: unknown): void {
 
   const fd = openSync(tmpPath, "w");
   try {
-    writeSync(fd, serialized);
+    writeFullySync(fd, serialized);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
@@ -47,18 +60,32 @@ export function writeJsonFileDurable(path: string, value: unknown): void {
  * write. Appends are not made atomic the way `writeJsonFileDurable` is
  * (a crash mid-write can leave a torn trailing line, which readers should
  * tolerate by skipping an unparsable final line); this is acceptable for an
- * append-only audit trail that is never read back by the bridge itself.
+ * append-only audit trail that is never read back by the bridge itself. The
+ * containing directory is fsynced the first time this call creates `path`,
+ * so the directory entry for a brand-new audit file itself survives a
+ * crash; that extra fsync is skipped on subsequent appends to an existing
+ * file, since the directory entry is already durable.
  */
 export function appendJsonLineDurable(path: string, value: unknown): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
+  const isNewFile = !existsSync(path);
   const line = `${JSON.stringify(value)}\n`;
   const fd = openSync(path, "a");
   try {
-    writeSync(fd, line);
+    writeFullySync(fd, line);
     fsyncSync(fd);
   } finally {
     closeSync(fd);
+  }
+
+  if (isNewFile) {
+    const dirFd = openSync(dir, "r");
+    try {
+      fsyncSync(dirFd);
+    } finally {
+      closeSync(dirFd);
+    }
   }
 }
 

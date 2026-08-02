@@ -13,7 +13,7 @@ import {
 import type { FingerprintRoute } from "./bridge-state.js";
 import type { AuditEvent } from "./audit.js";
 import { incidentSessionKey } from "./gateway-incident-client.js";
-import { BridgeConsistencyError, CheckpointConflictError } from "./errors.js";
+import { BridgeConsistencyError, CheckpointConflictError, DeliveryOrderingError } from "./errors.js";
 
 /**
  * Narrow interfaces so the processor depends only on the operations it
@@ -65,6 +65,35 @@ type ApplyResult = Omit<AlertDispositionResult, "fingerprint" | "deliveryId">;
 
 function assertNever(value: never): never {
   throw new Error(`unhandled alert delivery ingestion plan: ${JSON.stringify(value)}`);
+}
+
+/**
+ * `receivedAt` is stamped once per HTTP attempt in `server.ts`, *before*
+ * this fingerprint's `FingerprintLock` slot is acquired — deliberately, so
+ * the timestamp reflects real ingress time rather than however long the
+ * fingerprint happened to be queued. That means two concurrent requests for
+ * the same fingerprint can reach the reducer in an order that does not
+ * match the order their `receivedAt` values were stamped in, and the
+ * later-queued one can come out looking like a `received_at_regression`
+ * even though nothing about the delivery itself was wrong — it simply lost
+ * a benign race. Treating that as an ordinary `rejected` disposition would
+ * let it ride inside a `2xx`/`207` response, so Alertmanager would consider
+ * it permanently, successfully delivered even though it was silently
+ * dropped. Failing closed here instead means Alertmanager retries, and
+ * because `receivedAt` is re-stamped fresh on every retry, the retry's
+ * `receivedAt` is — in ordinary operation — always at least as recent as
+ * whatever caused the regression, so this reliably self-heals.
+ */
+function throwIfOrderingRegression(
+  reason: string,
+  fingerprint: string,
+  deliveryId: string,
+): void {
+  if (reason === "received_at_regression") {
+    throw new DeliveryOrderingError(
+      `delivery ${deliveryId} for fingerprint ${fingerprint} lost a receivedAt ordering race (received_at_regression); retry once concurrent delivery for this fingerprint has settled`,
+    );
+  }
 }
 
 /**
@@ -226,6 +255,7 @@ async function applyDelivery(
       // all of which require a *different* startsAt than the current state.
       switch (result.decision) {
         case "rejected":
+          throwIfOrderingRegression(result.reason, fingerprint, delivery.deliveryId);
           return { disposition: "rejected", reason: result.reason, occurrenceId: ownOccurrenceId };
         case "updated":
         case "duplicate":
@@ -299,6 +329,7 @@ async function applyDelivery(
         ...(plan.currentState ? { occurrenceId: plan.currentState.occurrenceId } : {}),
       };
     case "reject_delivery":
+      throwIfOrderingRegression(plan.reason, fingerprint, delivery.deliveryId);
       return {
         disposition: "rejected",
         reason: plan.reason,
