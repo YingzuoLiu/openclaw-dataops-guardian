@@ -35,9 +35,11 @@
     "state:v3:restart-proof": "bash scripts/run-incident-state-v3-restart-proof.sh",
     "state:restart-reconciliation-proof": "bash scripts/run-restart-reconciliation-proof.sh",
     "alertmanager:ingestion-proof": "npm run build && node scripts/alertmanager-ingestion-proof.mjs",
-    "alertmanager:http-bridge-proof": "bash scripts/run-alertmanager-http-bridge-proof.sh"
+    "alertmanager:http-bridge-proof": "bash scripts/run-alertmanager-http-bridge-proof.sh",
+    "kubernetes:kind-rollback-proof": "bash scripts/run-kind-deployment-rollback-proof.sh"
   },
   "dependencies": {
+    "@kubernetes/client-node": "1.4.0",
     "@openclaw/lobster": "2026.6.9",
     "openclaw": "2026.6.9",
     "typebox": "1.1.39"

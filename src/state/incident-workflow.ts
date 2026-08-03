@@ -105,7 +105,7 @@ export function recordApprovalDecision(
   );
 }
 
-function jsonValuesEqual(left: unknown, right: unknown): boolean {
+export function jsonValuesEqual(left: unknown, right: unknown): boolean {
   if (Object.is(left, right)) {
     return true;
   }

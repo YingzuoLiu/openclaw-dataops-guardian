@@ -12,8 +12,12 @@ one deliberately adversarial scenario, so this is a narrow reproducible result,
 not a production failure-rate claim.
 
 > **Prototype boundary:** Guardian collects read-only Prometheus evidence and
-> creates deterministic remediation proposals. The included remediation and
-> recovery steps are synthetic and do not mutate production.
+> creates deterministic remediation proposals. One real mutating action
+> exists: an administrator-allowlisted Kubernetes Deployment rollback,
+> gated by an approved incident and proven against a real, isolated kind
+> cluster. It is not a production-grade or multi-cluster remediation agent,
+> and recovery verification (confirming a rollback actually fixed the
+> alert) is still synthetic.
 
 For installation, dedicated-profile configuration, runtime verification, and
 safe removal, see the [Operator guide](docs/operator-guide.md). Security reports
@@ -33,7 +37,10 @@ and supported-version policy are documented in [SECURITY.md](SECURITY.md).
   remediation proposals;
 - resumable Lobster approval with deterministic synthetic remediation;
 - a live Gateway Hook proof and a 24-trial real-model A/B evaluation with raw
-  evidence and explicit limitations.
+  evidence and explicit limitations;
+- a real, allowlisted Kubernetes Deployment PodTemplate rollback, closed on
+  both sides by durable `IncidentState` remediation attempts and Deployment
+  audit annotations, proven against a real isolated kind cluster.
 
 ## Compatibility-first development path
 
@@ -157,6 +164,20 @@ See [the evaluation contract](docs/openrouter-ab-evaluation.md). Re-running paid
 trials remains opt-in and requires `OPENROUTER_API_KEY` in the caller's
 environment, or the same-named GitHub Actions repository secret for the manual
 workflow.
+
+A real, allowlisted Kubernetes Deployment rollback tool
+(`guardian_rollback_deployment`) is now part of the main plugin. It rolls a
+Deployment's PodTemplate back to a specific prior revision read from its
+owner-owned ReplicaSets, gated by an approved `IncidentState` running
+attempt and an administrator-configured cluster/namespace/deployment
+allowlist, and closed on both sides by durable remediation-attempt state and
+Deployment audit annotations. See the
+[Kubernetes Deployment rollback contract](docs/kubernetes-deployment-rollback.md).
+Run the real kind proof (requires Docker, `kind`, and `kubectl`) with:
+
+```bash
+npm run kubernetes:kind-rollback-proof
+```
 
 ## Version contract
 

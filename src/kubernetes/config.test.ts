@@ -1,0 +1,176 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  assertAllowlistedTarget,
+  createKubernetesDeploymentClient,
+  isAllowlistedTarget,
+  resolveKubernetesToolConfig,
+  type KubernetesToolConfig,
+} from "./config.js";
+
+const validRawConfig = {
+  kubernetes: {
+    clusterId: "guardian-step3-kind",
+    kubeconfigPath: "/etc/guardian/kubeconfig",
+    allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+  },
+};
+
+describe("resolveKubernetesToolConfig", () => {
+  it("accepts a well-formed administrator configuration", () => {
+    expect(resolveKubernetesToolConfig(validRawConfig)).toEqual({
+      clusterId: "guardian-step3-kind",
+      kubeconfigPath: "/etc/guardian/kubeconfig",
+      allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+    });
+  });
+
+  it("rejects a missing clusterId", () => {
+    expect(() =>
+      resolveKubernetesToolConfig({
+        kubernetes: { ...validRawConfig.kubernetes, clusterId: "" },
+      }),
+    ).toThrow("clusterId is required");
+  });
+
+  it("rejects a relative kubeconfig path", () => {
+    expect(() =>
+      resolveKubernetesToolConfig({
+        kubernetes: {
+          ...validRawConfig.kubernetes,
+          kubeconfigPath: "relative/kubeconfig",
+        },
+      }),
+    ).toThrow("must be an absolute path");
+  });
+
+  it("rejects an empty allowlist", () => {
+    expect(() =>
+      resolveKubernetesToolConfig({
+        kubernetes: { ...validRawConfig.kubernetes, allowlist: [] },
+      }),
+    ).toThrow("non-empty array");
+  });
+
+  it("rejects an allowlist entry with an invalid Kubernetes name", () => {
+    expect(() =>
+      resolveKubernetesToolConfig({
+        kubernetes: {
+          ...validRawConfig.kubernetes,
+          allowlist: [{ namespace: "Guardian_Step3", deployment: "payments" }],
+        },
+      }),
+    ).toThrow("valid Kubernetes names");
+  });
+});
+
+describe("isAllowlistedTarget / assertAllowlistedTarget", () => {
+  const config = resolveKubernetesToolConfig(validRawConfig);
+
+  it("allows only the exact configured namespace/deployment pair", () => {
+    expect(isAllowlistedTarget(config, "guardian-step3", "payments-step3")).toBe(
+      true,
+    );
+    expect(isAllowlistedTarget(config, "default", "payments-step3")).toBe(false);
+    expect(isAllowlistedTarget(config, "guardian-step3", "other-deployment")).toBe(
+      false,
+    );
+  });
+
+  it("throws before any Kubernetes access is attempted for an out-of-scope target", () => {
+    expect(() =>
+      assertAllowlistedTarget(config, "kube-system", "coredns"),
+    ).toThrow("rejected by administrator allowlist");
+  });
+});
+
+describe("createKubernetesDeploymentClient", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "guardian-kubeconfig-"));
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  async function writeKubeconfig(overrides: {
+    server?: string;
+    contextName?: string;
+  } = {}): Promise<KubernetesToolConfig> {
+    const contextName = overrides.contextName ?? "guardian-step3-kind";
+    const server = overrides.server ?? "https://127.0.0.1:6443";
+    const kubeconfigPath = join(dir, "kubeconfig");
+    await writeFile(
+      kubeconfigPath,
+      `apiVersion: v1
+kind: Config
+clusters:
+  - name: guardian-step3-kind
+    cluster:
+      server: ${server}
+      insecure-skip-tls-verify: true
+users:
+  - name: guardian-step3-kind
+    user:
+      token: fake-token
+contexts:
+  - name: ${contextName}
+    context:
+      cluster: guardian-step3-kind
+      user: guardian-step3-kind
+      namespace: guardian-step3
+current-context: ${contextName}
+`,
+      "utf8",
+    );
+    return {
+      clusterId: "guardian-step3-kind",
+      kubeconfigPath,
+      allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+    };
+  }
+
+  it("builds a client from a kubeconfig whose context matches the configured clusterId", async () => {
+    const config = await writeKubeconfig();
+    const client = await createKubernetesDeploymentClient(config);
+    expect(client.apiServer).toBe("https://127.0.0.1:6443/");
+  });
+
+  it("rejects a kubeconfig whose current-context does not match clusterId", async () => {
+    const config = await writeKubeconfig({ contextName: "some-other-cluster" });
+    await expect(createKubernetesDeploymentClient(config)).rejects.toThrow(
+      "does not match the configured clusterId",
+    );
+  });
+
+  it("rejects a non-HTTPS API server", async () => {
+    const config = await writeKubeconfig({ server: "http://127.0.0.1:6443" });
+    await expect(createKubernetesDeploymentClient(config)).rejects.toThrow(
+      "must use HTTPS",
+    );
+  });
+
+  it("rejects credentials embedded in the API server URL", async () => {
+    const config = await writeKubeconfig({
+      server: "https://user:secret@127.0.0.1:6443",
+    });
+    await expect(createKubernetesDeploymentClient(config)).rejects.toThrow(
+      "must not contain credentials",
+    );
+  });
+
+  it("rejects a kubeconfig path that does not exist", async () => {
+    const config: KubernetesToolConfig = {
+      clusterId: "guardian-step3-kind",
+      kubeconfigPath: join(dir, "missing-kubeconfig"),
+      allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+    };
+    await expect(createKubernetesDeploymentClient(config)).rejects.toThrow();
+  });
+});
