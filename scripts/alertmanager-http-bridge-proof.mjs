@@ -356,6 +356,109 @@ async function persistenceFailure() {
   console.log(JSON.stringify({ ok: true, phase }));
 }
 
+/**
+ * Polls the bridge with an isolated, throwaway probe delivery until it can
+ * reach the Gateway again, instead of assuming any fixed delay is enough.
+ *
+ * The bridge process here was never restarted across the `persistence-failure`
+ * phase — only the Gateway process was stopped and now a fresh one has been
+ * started — so recovery depends on the bridge's own long-lived
+ * `GatewayClient` reconnecting on its own. That reconnect uses exponential
+ * backoff (starting at 1s, doubling up to a 30s cap; see
+ * `node_modules/openclaw/dist/client-*.js`), so how long it actually takes
+ * to notice the Gateway is back depends on exactly where in that backoff
+ * cycle the drop was detected — it is not bounded by anything this proof
+ * controls, and a single-digit-second retry budget can legitimately not be
+ * enough even with no bug involved. This is a real bounded wait (never an
+ * unconditional `sleep`, and never an unbounded one either): it polls on a
+ * short fixed interval up to `timeoutMs`, and only stops early on success.
+ *
+ * The probe fingerprint/occurrence is entirely disjoint from every other
+ * phase's fixtures, so this can never interact with (or be confused for)
+ * the checkpoint under test elsewhere in this proof. On every failed
+ * attempt it reads the bridge's own durable `audit.jsonl` for the
+ * corresponding `persistence_failure` record and prints its `message`
+ * (the real underlying Gateway RPC failure reason — a connect timeout, a
+ * dropped socket, ... — set in `GatewayIncidentClient`) to `stderr`. That
+ * message is never sent back over HTTP (the response only ever carries the
+ * sanitized `persistence_unavailable` code), so reading it back out of the
+ * audit trail is the only way to see the real cause here. If the deadline
+ * is reached, the last such reason is included in the thrown error so a
+ * genuine stuck-reconnect bug fails loudly with an actual explanation
+ * instead of a bare timeout.
+ */
+async function waitForGatewayReachable() {
+  const timeoutMs = Number(
+    process.env.ALERTMANAGER_BRIDGE_PROOF_READINESS_TIMEOUT_MS ?? 45_000,
+  );
+  const intervalMs = 1_000;
+  const fingerprint = "fingerprint-http-bridge-proof-readiness-probe";
+  const auditPath = `${requireEnv("ALERTMANAGER_BRIDGE_STATE_DIR")}/audit.jsonl`;
+  const deadline = Date.now() + timeoutMs;
+
+  let lastReason = "(no persistence_failure audit entry seen yet)";
+  let attempt = 0;
+  for (;;) {
+    attempt += 1;
+    const anchorMs = freshAnchorMs() - attempt * 60_000;
+    const response = await postWebhook({
+      body: JSON.stringify(
+        envelope([
+          webhookAlert({
+            fingerprint,
+            startsAt: anchorTimestamp(anchorMs, 0),
+            endsAt: anchorTimestamp(anchorMs, 5),
+          }),
+        ]),
+      ),
+    });
+
+    if (response.status === 200) {
+      console.log(JSON.stringify({ ok: true, phase, attempts: attempt }));
+      return;
+    }
+    if (response.status !== 503 || response.json?.error !== "persistence_unavailable") {
+      throw new Error(
+        `wait-for-gateway-reachable: unexpected response on attempt ${attempt}: ` +
+          `${response.status} ${JSON.stringify(response.json)}`,
+      );
+    }
+
+    const reason = readLatestPersistenceFailureReason(auditPath, fingerprint);
+    if (reason !== undefined) {
+      lastReason = reason;
+    }
+    process.stderr.write(
+      `wait-for-gateway-reachable: attempt ${attempt} still persistence_unavailable: ${lastReason}\n`,
+    );
+
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `wait-for-gateway-reachable: gave up after ${timeoutMs}ms (${attempt} attempts); ` +
+          `last underlying reason: ${lastReason}`,
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
+function readLatestPersistenceFailureReason(auditPath, fingerprint) {
+  let entries;
+  try {
+    entries = readFileSync(auditPath, "utf8")
+      .trim()
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
+  } catch {
+    return undefined;
+  }
+  const matching = entries.filter(
+    (entry) => entry.kind === "persistence_failure" && entry.fingerprint === fingerprint,
+  );
+  return matching.length > 0 ? matching[matching.length - 1].message : undefined;
+}
+
 async function verifyCheckpointStillHeld() {
   const fixture = loadFixture();
   // Re-sending the held delivery must still report deferred_new_occurrence:
@@ -887,6 +990,7 @@ const phases = {
   "route-regression": routeRegression,
   "truncated-alerts-audit": truncatedAlertsAudit,
   "delivery-ordering-conflict": deliveryOrderingConflict,
+  "wait-for-gateway-reachable": waitForGatewayReachable,
 };
 
 const handler = phases[phase];

@@ -157,8 +157,14 @@ run_proof_phase persistence-failure
 
 # --- Gateway restart: state must survive without the bridge restarting.
 #     Nothing about the held delivery has changed, so this is the same
-#     assertion as the bridge-restart check above. ---
+#     assertion as the bridge-restart check above. The bridge process (#2)
+#     was never restarted, so its own long-lived GatewayClient has to
+#     reconnect on its own; that reconnect uses exponential backoff up to a
+#     30s cap, which is not bounded by anything this script controls, so a
+#     bounded readiness probe (never a fixed sleep) runs first rather than
+#     asserting against the very next request. ---
 start_gateway "$RUNTIME_DIR/gateway-2.log"
+run_proof_phase wait-for-gateway-reachable
 run_proof_phase verify-checkpoint-still-held
 
 # --- Settle the blocking attempt out of band and drain the checkpoint. ---

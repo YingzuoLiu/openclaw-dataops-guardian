@@ -391,6 +391,91 @@ describe("drainPendingCheckpoint", () => {
   });
 });
 
+describe("recovery from a transient Gateway persistence failure", () => {
+  // Platform-independent equivalent of the HTTP-level "Gateway goes down,
+  // then comes back" scenario: exercised here as a synchronous, in-process
+  // Gateway RPC failure/recovery rather than an actual killed-and-restarted
+  // process, so it runs identically on every OS the test suite runs on
+  // (unlike the full `alertmanager:http-bridge-proof`, which spawns real
+  // child processes and is sensitive to how quickly the OS reports a
+  // dropped/restored TCP connection).
+  it("does not lose or corrupt a held checkpoint across a failed drain, and recovers once the Gateway is reachable again", async () => {
+    const { deps, gateway, bridgeState } = makeDeps();
+    const created = await processCanonicalAlertDelivery(deps, delivery());
+    const route = bridgeState.getRoute("fingerprint-1")!;
+
+    const running: IncidentState = {
+      ...gateway.sessions.get(route.sessionKey)!,
+      stage: "remediation",
+      approvalStatus: "approved",
+      remediationAttempts: [
+        {
+          idempotencyKey: "attempt-1",
+          target: { kind: "synthetic" },
+          status: "running",
+          startedAt: "2026-08-01T00:03:00.000Z",
+          finishedAt: null,
+          error: null,
+        },
+      ],
+      updatedAt: "2026-08-01T00:03:00.000Z",
+    };
+    gateway.sessions.set(route.sessionKey, running);
+
+    await processCanonicalAlertDelivery(
+      deps,
+      delivery({
+        startsAt: "2026-08-02T00:00:00.000Z",
+        receivedAt: "2026-08-02T00:00:01.000Z",
+        deliveryId: "delivery-2",
+      }),
+    );
+    const checkpointBeforeFailure = bridgeState.getCheckpoint("fingerprint-1");
+    expect(checkpointBeforeFailure).toBeDefined();
+
+    // Settle the blocking attempt (as restart reconciliation would, out of
+    // this bridge's scope) so the next drain attempt is otherwise eligible
+    // to replay — then make the Gateway unreachable for the replay's own
+    // destination session, simulating the Gateway being down mid-drain.
+    gateway.sessions.set(route.sessionKey, {
+      ...running,
+      remediationAttempts: [
+        { ...running.remediationAttempts[0]!, status: "succeeded", finishedAt: "2026-08-01T00:04:00.000Z" },
+      ],
+      stage: "recovery_check",
+      updatedAt: "2026-08-01T00:04:00.000Z",
+    });
+    const heldOccurrenceId = createIncidentOccurrenceId("fingerprint-1", "2026-08-02T00:00:00.000Z");
+    gateway.failingSessionKeys.add(incidentSessionKey(heldOccurrenceId));
+
+    await expect(drainPendingCheckpoint(deps, "fingerprint-1")).rejects.toThrow();
+
+    // The failed drain must not have lost, cleared, or altered the
+    // checkpoint, nor moved the route — exactly the property the bridge's
+    // `persistence_unavailable` HTTP path (`server.ts`) depends on to be
+    // safe to retry.
+    expect(bridgeState.getCheckpoint("fingerprint-1")).toEqual(checkpointBeforeFailure);
+    expect(bridgeState.getRoute("fingerprint-1")).toEqual(route);
+
+    // The transient condition clears (the Gateway becomes reachable again,
+    // exactly as it does once `start_gateway` brings a fresh process up in
+    // the HTTP-level proof) — a retry of the exact same drain must now
+    // succeed rather than being permanently stuck.
+    gateway.failingSessionKeys.delete(incidentSessionKey(heldOccurrenceId));
+
+    await drainPendingCheckpoint(deps, "fingerprint-1");
+
+    expect(bridgeState.getCheckpoint("fingerprint-1")).toBeUndefined();
+    const newRoute = bridgeState.getRoute("fingerprint-1")!;
+    expect(newRoute.occurrenceId).toBe(heldOccurrenceId);
+    expect(newRoute.occurrenceId).not.toBe(created.occurrenceId);
+    const replayedState = gateway.sessions.get(newRoute.sessionKey);
+    // Recorded exactly once: the failed attempt above must not have
+    // double-applied the delivery before throwing.
+    expect(replayedState?.recentDeliveryIds.filter((id) => id === "delivery-2")).toEqual(["delivery-2"]);
+  });
+});
+
 describe("checkpoint conflict", () => {
   it("preserves an already-held deferred delivery and rejects a conflicting one", async () => {
     const { deps, gateway, bridgeState } = makeDeps();

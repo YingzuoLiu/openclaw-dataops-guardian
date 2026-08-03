@@ -104,8 +104,16 @@ export class GatewayIncidentClient {
     try {
       return await this.client.request<T>(method, params);
     } catch (error) {
+      // The underlying cause (a connect timeout, a dropped socket mid
+      // reconnect backoff, an RPC-level rejection, ...) is folded into the
+      // message here because that message is what ends up in the durable
+      // `persistence_failure` audit record (`audit.ts`/`server.ts`) — never
+      // in the HTTP response, which only ever exposes the sanitized
+      // `persistence_unavailable` error code. Without it, every kind of
+      // Gateway failure looks identical in the audit trail.
+      const causeMessage = error instanceof Error ? error.message : String(error);
       throw new GatewayPersistenceError(
-        `gateway request failed: ${method}`,
+        `gateway request failed: ${method}: ${causeMessage}`,
         { cause: error },
       );
     }
