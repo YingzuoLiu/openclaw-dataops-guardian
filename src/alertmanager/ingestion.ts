@@ -126,7 +126,13 @@ function isStringMap(value: unknown): value is Record<string, string> {
   );
 }
 
-function canonicalTimestamp(value: unknown): string | undefined {
+/**
+ * Exported so callers that revalidate already-canonicalized data (the
+ * bridge's checkpoint decoder, on load) can require the exact same
+ * normalized-ISO-string form this boundary itself produces, instead of a
+ * separately maintained notion of "canonical enough".
+ */
+export function canonicalTimestamp(value: unknown): string | undefined {
   if (
     typeof value !== "string" ||
     !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
@@ -168,8 +174,12 @@ function stableJson(value: unknown): string {
  * validated fixed timestamp for resolved) distinguish the firing
  * announcement from the resolution: they must never collide, since the
  * reducer treats them as different lifecycle transitions.
+ *
+ * Exported so callers that revalidate an already-canonicalized delivery
+ * (the bridge's checkpoint decoder, on load) can recompute this exact
+ * identity instead of maintaining a second, driftable copy of the formula.
  */
-function createAlertmanagerDeliveryId(input: {
+export function createAlertmanagerDeliveryId(input: {
   alertStatus: "firing" | "resolved";
   fingerprint: string;
   startsAt: string;
@@ -325,18 +335,31 @@ export function canonicalizeAlertmanagerWebhook(
   };
 }
 
+/**
+ * Exported so callers that need to verify a persisted checkpoint's
+ * `checkpointId` (the bridge's `bridge-state.ts`, on load) can reuse this
+ * exact computation instead of re-implementing the hash algorithm
+ * separately, which would risk the two silently drifting apart.
+ */
+export function computeDeferredAlertDeliveryCheckpointId(
+  blockedByOccurrenceId: string,
+  deliveryId: string,
+): string {
+  return createHash("sha256")
+    .update(`deferred-alert-delivery-v1\0${blockedByOccurrenceId}\0${deliveryId}`)
+    .digest("hex");
+}
+
 function createDeferredCheckpoint(
   currentState: IncidentState,
   delivery: AlertDelivery,
 ): DeferredAlertDeliveryCheckpoint {
-  const checkpointId = createHash("sha256")
-    .update(
-      `deferred-alert-delivery-v1\0${currentState.occurrenceId}\0${delivery.deliveryId}`,
-    )
-    .digest("hex");
   return {
     schemaVersion: DEFERRED_ALERT_DELIVERY_CHECKPOINT_VERSION,
-    checkpointId,
+    checkpointId: computeDeferredAlertDeliveryCheckpointId(
+      currentState.occurrenceId,
+      delivery.deliveryId,
+    ),
     blockedByOccurrenceId: currentState.occurrenceId,
     delivery: structuredClone(delivery),
   };

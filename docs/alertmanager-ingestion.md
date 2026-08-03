@@ -141,6 +141,12 @@ This step does not add:
 - Kubernetes reads or writes;
 - remediation execution.
 
+An HTTP receiver and durable checkpoint/route persistence are now
+implemented on top of this boundary, unchanged, by the external bridge in
+[`docs/alertmanager-http-bridge.md`](alertmanager-http-bridge.md).
+Investigation dispatch, Kubernetes access, and remediation execution remain
+out of scope there too.
+
 ## Residual risks
 
 These are known gaps in this milestone's design, not implementation bugs.
@@ -179,16 +185,17 @@ what is actually implemented.
   can coexist indefinitely — a valid state per schema, but one a bridge or
   operator dashboard should be prepared to show clearly, since remediation
   cancellation is explicitly out of scope for this milestone.
-- **Deferred-delivery checkpoints are not durable yet.**
-  `planAlertDeliveryIngestion` computes a deterministic
+- **Deferred-delivery checkpoints are not durable yet in this boundary
+  itself.** `planAlertDeliveryIngestion` computes a deterministic
   `DeferredAlertDeliveryCheckpoint` for `deferred_new_occurrence`, but
-  performs no I/O. Nothing in this codebase enforces that a future bridge
-  actually persists that checkpoint before acknowledging the webhook; it is
-  a documented contract (see "Persistence plan" above and the restart
-  reconciliation replay contract in `docs/incident-state-v3.md`), not a
-  type- or runtime-enforced one. A bridge that acknowledges the webhook
-  without durably writing the checkpoint can lose a deferred delivery on
-  crash.
+  performs no I/O — that remains true here, by design (see "Persistence
+  plan" above). The external bridge in
+  [`docs/alertmanager-http-bridge.md`](alertmanager-http-bridge.md) is now
+  the concrete implementation that durably writes the checkpoint before
+  acknowledging the webhook, per the restart reconciliation replay contract
+  in `docs/incident-state-v3.md`. A bridge that skipped that write would
+  still be able to lose a deferred delivery on crash; the shipped bridge
+  does not skip it (see its crash-window analysis).
 - **`receivedAt` correctness depends on the bridge's clock, and
   transitively on Alertmanager's.** `canonicalizeAlertmanagerWebhook`
   trusts the `receivedAt` value the bridge passes in — it is not derived
