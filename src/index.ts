@@ -25,6 +25,7 @@ import { createProposeRemediationTool } from "./tools/propose-remediation.js";
 import { createQueryPrometheusTool } from "./tools/query-prometheus.js";
 import { createRollbackDeploymentTool } from "./tools/rollback-deployment.js";
 import { buildRollbackDeploymentToolGateDecision } from "./hooks/rollback-deployment-gate.js";
+import { readRuntimeIncidentState } from "./hooks/runtime-incident-state-reader.js";
 
 export {
   isRestartReconciliationManualReview,
@@ -212,7 +213,11 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
         if (event.toolName === "guardian_rollback_deployment") {
           return buildRollbackDeploymentToolGateDecision({
-            incident: ctx.getSessionExtension?.(INCIDENT_STATE_NAMESPACE),
+            incident: readRuntimeIncidentState(
+              api.runtime,
+              ctx.sessionKey,
+              INCIDENT_STATE_NAMESPACE,
+            ),
             toolParams: event.params,
             rawConfig: api.pluginConfig,
           });
