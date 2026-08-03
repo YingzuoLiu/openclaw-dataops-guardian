@@ -83,11 +83,22 @@ describe("fsyncDirectoryIfSupported", () => {
     ).not.toThrow();
   });
 
-  it("fsyncs an existing directory without throwing on POSIX-like platforms", () => {
-    for (const platform of ["linux", "darwin"] as const) {
-      expect(() => fsyncDirectoryIfSupported(dir, platform)).not.toThrow();
-    }
-  });
+  // Unlike the two tests above (which only ever exercise the deliberately
+  // failing `openSync` path, so a fake `platform` label is enough to select
+  // the branch under test without depending on what the host OS actually
+  // supports), this one calls `openSync`/`fsyncSync` on a directory that
+  // really exists — so it must run the *real* directory fsync syscall on
+  // whatever OS is actually executing the test. Passing a fake POSIX
+  // `platform` label here while running on real Windows would still make
+  // this function attempt the real (unsupported) Windows directory fsync
+  // and throw `EPERM`, regardless of the label; it must only run where the
+  // host itself is POSIX-like.
+  it.skipIf(process.platform === "win32")(
+    "fsyncs an existing directory without throwing on POSIX",
+    () => {
+      expect(() => fsyncDirectoryIfSupported(dir, process.platform)).not.toThrow();
+    },
+  );
 
   it("propagates a directory fsync failure on POSIX-like platforms", () => {
     const missingDir = join(dir, "does-not-exist");
