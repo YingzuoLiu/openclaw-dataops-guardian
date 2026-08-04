@@ -42,6 +42,45 @@ describe("readRuntimeIncidentState", () => {
     expect(getSessionEntry).toHaveBeenCalledWith({ sessionKey: SESSION_KEY });
   });
 
+  it("calls getSessionEntry with `this` bound to runtime.agent.session, not detached", () => {
+    let capturedThis: unknown;
+    const session = {
+      // A plain method (not an arrow function) so it actually depends on
+      // the call receiver -- this is what a host implementation relying on
+      // internal `this` state would look like. If the reader ever goes
+      // back to calling a detached function reference, `capturedThis`
+      // would be undefined here instead of `session`.
+      getSessionEntry(this: unknown, _params: { sessionKey: string }) {
+        capturedThis = this;
+        return {
+          pluginExtensions: { "dataops-guardian": { incident: INCIDENT_VALUE } },
+        };
+      },
+    };
+    const runtime = { agent: { session } };
+
+    const result = readRuntimeIncidentState(runtime, SESSION_KEY, NAMESPACE);
+
+    expect(capturedThis).toBe(session);
+    expect(result).toEqual(INCIDENT_VALUE);
+  });
+
+  it("still fails closed when a receiver-dependent getSessionEntry throws", () => {
+    const session = {
+      getSessionEntry(this: unknown) {
+        if (this !== session) {
+          throw new Error("this was not bound to session");
+        }
+        throw new Error("simulated host failure");
+      },
+    };
+    const runtime = { agent: { session } };
+
+    expect(
+      readRuntimeIncidentState(runtime, SESSION_KEY, NAMESPACE),
+    ).toBeUndefined();
+  });
+
   it("fails closed when sessionKey is undefined", () => {
     const entry = {
       pluginExtensions: { "dataops-guardian": { incident: INCIDENT_VALUE } },

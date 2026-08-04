@@ -42,6 +42,7 @@ const KNOWN_COMMANDS = [
   "rollback",
   "replay",
   "denied-target",
+  "post-restart-replay",
   "reconcile",
   "verify-blocked-after-resolution",
   "second-occurrence",
@@ -79,17 +80,20 @@ const ready = new Promise((resolve, reject) => {
   rejectReady = reject;
 });
 
+// Non-UI backend-mode client (clientName: gateway-client, mode: backend,
+// token auth): the same shape verified against a real Gateway in the
+// runtime.getSessionEntry compatibility repro, and the reason
+// gateway.controlUi.dangerouslyDisableDeviceAuth is no longer needed --
+// that flag only exists for mode: "ui" connections, which this proof no
+// longer uses.
 const client = new GatewayClient({
   url: `ws://127.0.0.1:${GATEWAY_PORT}`,
   token: GATEWAY_TOKEN,
-  clientName: "openclaw-tui",
+  clientName: "gateway-client",
   clientDisplayName: "dataops-guardian-kind-deployment-rollback",
   clientVersion: "2026.6.9",
   platform: process.platform,
-  mode: "ui",
-  role: "operator",
-  scopes: ["operator.admin", "operator.read", "operator.write"],
-  deviceIdentity: null,
+  mode: "backend",
   requestTimeoutMs: 20_000,
   onHelloOk: resolveReady,
   onConnectError: rejectReady,
@@ -380,6 +384,60 @@ async function replay(rawKubernetesConfig) {
   );
 }
 
+/**
+ * Runs after the Gateway has been restarted but *before*
+ * reconcileIncidentOnRestart settles the running attempt -- the persisted
+ * IncidentState is still approved + stage=remediation + one running
+ * attempt at this point. Replays the exact same idempotencyKey/target
+ * through the real guardian_rollback_deployment tools.invoke call (not the
+ * reader or gate helper directly) to prove the gate's
+ * runtime.getSessionEntry read actually survives a fresh Gateway process,
+ * not just the process that originally wrote the state. If the gate had
+ * instead failed closed on missing/unreadable state after restart, this
+ * call would be blocked with "requires persisted incident state" instead
+ * of reaching Kubernetes at all -- so `gateAllowed` alone does not
+ * distinguish "correctly read settled state" from "correctly read running
+ * state"; the Kubernetes-layer `decision: "duplicate"` and unchanged
+ * generation/resourceVersion below are what prove no second mutation was
+ * dispatched.
+ */
+async function postRestartReplay(rawKubernetesConfig) {
+  const record = await readResume();
+  const kubernetesConfig = resolveKubernetesToolConfig({ kubernetes: rawKubernetesConfig });
+  const before = await readDeploymentGeneration(kubernetesConfig);
+
+  const invocation = await invokeRollbackTool(record.sessionKey, record.idempotencyKey, record.target);
+  assert(
+    invocation.ok === true,
+    `post-restart replay was blocked -- the gate did not read the persisted running attempt after restart: ${JSON.stringify(invocation)}`,
+  );
+  const details = invocation.output?.details;
+  assert(
+    details?.decision === "duplicate",
+    `post-restart replay did not return duplicate (risk of a second real mutation): ${JSON.stringify(details)}`,
+  );
+
+  const after = await readDeploymentGeneration(kubernetesConfig);
+  const generationUnchanged = after.generation === before.generation;
+  const resourceVersionUnchanged = after.resourceVersion === before.resourceVersion;
+  assert(generationUnchanged, "post-restart replay changed Deployment generation (mutated twice)");
+  assert(
+    resourceVersionUnchanged,
+    "post-restart replay changed Deployment resourceVersion (mutated twice)",
+  );
+
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "post-restart-replay",
+      gateAllowed: true,
+      decision: details.decision,
+      generationUnchanged,
+      resourceVersionUnchanged,
+    })}\n`,
+  );
+}
+
 async function deniedTarget() {
   await client.request("sessions.create", {
     key: DENIED_SESSION_KEY,
@@ -583,6 +641,8 @@ async function run() {
     await replay(rawKubernetesConfig);
   } else if (command === "denied-target") {
     await deniedTarget();
+  } else if (command === "post-restart-replay") {
+    await postRestartReplay(rawKubernetesConfig);
   } else if (command === "reconcile") {
     await reconcile(rawKubernetesConfig);
   } else if (command === "verify-blocked-after-resolution") {

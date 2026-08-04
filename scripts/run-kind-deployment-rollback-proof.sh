@@ -77,8 +77,6 @@ delete_cluster() {
 
 cleanup() {
   stop_gateway
-  "$ROOT_DIR/node_modules/.bin/openclaw" config unset \
-    gateway.controlUi.dangerouslyDisableDeviceAuth >/dev/null 2>&1 || true
   delete_cluster
   if [[ -d "$RUNTIME_DIR" && "$RUNTIME_DIR" == "${TMPDIR:-/tmp}"/guardian-kind-deployment-rollback.* ]]; then
     find "$RUNTIME_DIR" -depth -delete
@@ -198,12 +196,14 @@ KUBERNETES_CONFIG_JSON="$(
 )"
 
 # --- 3. Real OpenClaw Gateway with the main dataops-guardian plugin linked. ---
+# The RPC driver connects as a non-UI backend-mode client (clientName:
+# gateway-client, mode: backend, token auth), so there is no Control UI
+# device-pairing surface to disable here -- token auth and loopback binding
+# are the only authentication boundaries in play, unchanged from before.
 "$ROOT_DIR/node_modules/.bin/openclaw" plugins install --link "$ROOT_DIR" >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set gateway.mode local >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
   gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
-"$ROOT_DIR/node_modules/.bin/openclaw" config set \
-  gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
   "plugins.entries.dataops-guardian.config.kubernetes" "$KUBERNETES_CONFIG_JSON" >/dev/null
 
@@ -220,6 +220,19 @@ stop_gateway
 
 # --- 6. Restart the Gateway; the running attempt must survive on disk. ---
 start_gateway "$RUNTIME_DIR/gateway-2.log"
+
+# --- 6a. Before reconciliation runs, IncidentState is still approved +
+# stage=remediation + one running attempt. Replay the same rollback call
+# through the real tools.invoke path on this freshly restarted Gateway
+# process to prove before_tool_call's runtime.getSessionEntry read actually
+# survives a restart, not just the process that originally wrote the
+# state. The gate must allow it (proving the read succeeded), and
+# Kubernetes must report "duplicate" with an unchanged
+# generation/resourceVersion (proving no second mutation was dispatched) --
+# gate allowance alone can't tell "read the running attempt correctly"
+# apart from "read nothing and something else let it through".
+POST_RESTART_REPLAY_JSON="$(run_rpc post-restart-replay)"
+
 RECONCILE_JSON="$(run_rpc reconcile)"
 BLOCKED_JSON="$(run_rpc verify-blocked-after-resolution)"
 
@@ -284,7 +297,7 @@ delete_cluster
 
 node -e '
   const parts = process.argv.slice(1).map((entry) => JSON.parse(entry));
-  const [prepareResult, rollbackResult, replayResult, deniedResult, reconcileResult, blockedResult, secondOccurrenceResult] = parts;
+  const [prepareResult, rollbackResult, replayResult, deniedResult, postRestartReplayResult, reconcileResult, blockedResult, secondOccurrenceResult] = parts;
   const summary = {
     ok: true,
     proof: "kind-deployment-rollback",
@@ -295,6 +308,9 @@ node -e '
     replayDecision: replayResult.decision,
     replayGenerationUnchanged: replayResult.generationUnchanged,
     deniedTargetBlocked: deniedResult.denied === true,
+    postRestartGateReadSucceeded: postRestartReplayResult.gateAllowed === true,
+    postRestartReplayDecision: postRestartReplayResult.decision,
+    postRestartReplayGenerationUnchanged: postRestartReplayResult.generationUnchanged,
     restartReconciliation: reconcileResult.externalOutcome,
     attemptStatus: reconcileResult.attemptStatus,
     incidentStage: reconcileResult.stage,
@@ -311,4 +327,4 @@ node -e '
     rbacCreateDenied: true,
   };
   process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
-' "$PREPARE_JSON" "$ROLLBACK_JSON" "$REPLAY_JSON" "$DENIED_JSON" "$RECONCILE_JSON" "$BLOCKED_JSON" "$SECOND_OCCURRENCE_JSON"
+' "$PREPARE_JSON" "$ROLLBACK_JSON" "$REPLAY_JSON" "$DENIED_JSON" "$POST_RESTART_REPLAY_JSON" "$RECONCILE_JSON" "$BLOCKED_JSON" "$SECOND_OCCURRENCE_JSON"

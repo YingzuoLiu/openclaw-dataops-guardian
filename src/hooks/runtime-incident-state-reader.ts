@@ -55,7 +55,11 @@ export function readRuntimeIncidentState(
 
   let entry: unknown;
   try {
-    entry = getSessionEntry({ sessionKey });
+    // Reflect.apply keeps the call receiver as `session` -- equivalent to
+    // session.getSessionEntry({ sessionKey }) -- rather than detaching the
+    // function reference and calling it with `this` unbound, which would
+    // break an implementation that relies on `this` internally.
+    entry = Reflect.apply(getSessionEntry, session, [{ sessionKey }]);
   } catch {
     return undefined;
   }
