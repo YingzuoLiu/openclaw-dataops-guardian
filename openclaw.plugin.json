@@ -6,7 +6,8 @@
     "tools": [
       "guardian_inspect_metric_snapshot",
       "guardian_propose_remediation",
-      "guardian_query_prometheus"
+      "guardian_query_prometheus",
+      "guardian_rollback_deployment"
     ]
   },
   "toolMetadata": {
@@ -17,6 +18,9 @@
       "optional": false
     },
     "guardian_query_prometheus": {
+      "optional": false
+    },
+    "guardian_rollback_deployment": {
       "optional": false
     }
   },
@@ -51,6 +55,34 @@
         ],
         "default": "on_guardian_tool",
         "description": "Control require_tools enforcement. disabled is intended for controlled A/B evaluation; durable incident and approval policy remains active."
+      },
+      "kubernetes": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Administrator-only Kubernetes Deployment rollback configuration. Never model- or caller-supplied.",
+        "properties": {
+          "clusterId": {
+            "type": "string",
+            "description": "Identifier that must match the scoped kubeconfig's current-context name."
+          },
+          "kubeconfigPath": {
+            "type": "string",
+            "description": "Absolute path to the disposable, namespace-scoped kubeconfig used for rollback."
+          },
+          "allowlist": {
+            "type": "array",
+            "description": "Exact namespace/deployment pairs guardian_rollback_deployment is permitted to mutate.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["namespace", "deployment"],
+              "properties": {
+                "namespace": { "type": "string" },
+                "deployment": { "type": "string" }
+              }
+            }
+          }
+        }
       }
     }
   }

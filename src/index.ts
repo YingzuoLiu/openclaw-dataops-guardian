@@ -23,6 +23,9 @@ import {
 import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot.js";
 import { createProposeRemediationTool } from "./tools/propose-remediation.js";
 import { createQueryPrometheusTool } from "./tools/query-prometheus.js";
+import { createRollbackDeploymentTool } from "./tools/rollback-deployment.js";
+import { buildRollbackDeploymentToolGateDecision } from "./hooks/rollback-deployment-gate.js";
+import { readRuntimeIncidentState } from "./hooks/runtime-incident-state-reader.js";
 
 export {
   isRestartReconciliationManualReview,
@@ -33,6 +36,27 @@ export {
   type ExternalRemediationReconciler,
   type RestartReconciliationResult,
 } from "./state/restart-reconciliation.js";
+
+export {
+  KubernetesDeploymentRollbackReconciler,
+} from "./kubernetes/deployment-rollback-reconciler.js";
+
+export {
+  decodeKubernetesDeploymentRollbackTarget,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_TARGET_TYPE,
+  performDeploymentRollback,
+  ROLLBACK_FROM_REVISION_ANNOTATION,
+  ROLLBACK_KEY_HASH_ANNOTATION,
+  ROLLBACK_TEMPLATE_HASH_ANNOTATION,
+  ROLLBACK_TO_REVISION_ANNOTATION,
+  type DeploymentRollbackResult,
+  type KubernetesDeploymentRollbackTarget,
+} from "./kubernetes/deployment-rollback.js";
+
+export {
+  resolveKubernetesToolConfig,
+  type KubernetesToolConfig,
+} from "./kubernetes/config.js";
 
 export {
   ALERTMANAGER_WEBHOOK_VERSION,
@@ -105,6 +129,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.registerTool(createInspectMetricSnapshotTool());
     api.registerTool(createProposeRemediationTool());
     api.registerTool(createQueryPrometheusTool(api.pluginConfig));
+    api.registerTool(createRollbackDeploymentTool(api.pluginConfig));
     api.registerToolMetadata({
       toolName: "guardian_inspect_metric_snapshot",
       displayName: "Inspect Metric Snapshot",
@@ -127,6 +152,14 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
         "Create a deterministic remediation proposal without executing it.",
       risk: "low",
       tags: ["dataops", "proposal", "read-only"],
+    });
+    api.registerToolMetadata({
+      toolName: "guardian_rollback_deployment",
+      displayName: "Rollback Kubernetes Deployment",
+      description:
+        "Roll an administrator-allowlisted Kubernetes Deployment back to a specific prior PodTemplate revision.",
+      risk: "high",
+      tags: ["dataops", "kubernetes", "mutating"],
     });
 
     api.on(
@@ -176,6 +209,18 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           if (runEvidence) {
             storeRunEvidence(runId, runEvidence);
           }
+        }
+
+        if (event.toolName === "guardian_rollback_deployment") {
+          return buildRollbackDeploymentToolGateDecision({
+            incident: readRuntimeIncidentState(
+              api.runtime,
+              ctx.sessionKey,
+              INCIDENT_STATE_NAMESPACE,
+            ),
+            toolParams: event.params,
+            rawConfig: api.pluginConfig,
+          });
         }
 
         if (event.toolName !== "guardian_propose_remediation") {

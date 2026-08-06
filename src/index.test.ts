@@ -1,11 +1,25 @@
 import { describe, expect, it } from "vitest";
 
 import plugin from "./index.js";
+import { reduceAlertDelivery } from "./state/incident-reducer.js";
+import {
+  beginRemediationAttempt,
+  recordApprovalDecision,
+  recordMetricEvidence,
+  recordRemediationProposal,
+} from "./state/incident-workflow.js";
+import type { RemediationTarget } from "./state/incident-state.js";
+import { inspectMetricSnapshot } from "./tools/inspect-metric-snapshot.js";
+import { proposeRemediation } from "./tools/propose-remediation.js";
 
 type RegisteredHook = (
   event: Record<string, unknown>,
   context: Record<string, unknown>,
 ) => unknown;
+
+function runtimeEntryFor(incident: unknown) {
+  return { pluginExtensions: { "dataops-guardian": { incident } } };
+}
 
 function createPluginHarness(options?: {
   enforceRequireToolsOnAgentRuns?: boolean;
@@ -14,6 +28,15 @@ function createPluginHarness(options?: {
     | "on_guardian_tool"
     | "all_agent_runs";
   rejectRunContextWrites?: boolean;
+  kubernetesConfig?: unknown;
+  /**
+   * Fakes api.runtime.agent.session.getSessionEntry, keyed by sessionKey.
+   * This is the accessor guardian_rollback_deployment's gate reads through
+   * (see src/hooks/runtime-incident-state-reader.ts); it deliberately does
+   * not go through ctx.getSessionExtension.
+   */
+  runtimeSessionEntries?: Map<string, unknown>;
+  runtimeGetSessionEntryThrows?: boolean;
 }) {
   const hooks = new Map<string, RegisteredHook>();
   const runContexts = new Map<string, unknown>();
@@ -24,6 +47,19 @@ function createPluginHarness(options?: {
       enforceRequireToolsOnAgentRuns:
         options?.enforceRequireToolsOnAgentRuns ?? false,
       requireToolsGateMode: options?.requireToolsGateMode,
+      kubernetes: options?.kubernetesConfig,
+    },
+    runtime: {
+      agent: {
+        session: {
+          getSessionEntry: (params: { sessionKey: string }) => {
+            if (options?.runtimeGetSessionEntryThrows) {
+              throw new Error("simulated runtime.getSessionEntry failure");
+            }
+            return options?.runtimeSessionEntries?.get(params.sessionKey);
+          },
+        },
+      },
     },
     registerTool: () => undefined,
     registerToolMetadata: () => undefined,
@@ -91,6 +127,253 @@ describe("DataOps Guardian plugin hook wiring", () => {
       block: true,
       blockReason:
         "remediation proposal cannot read incident state: unsupported_schema",
+    });
+  });
+
+  it("blocks guardian_rollback_deployment when there is no persisted incident state", async () => {
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      runtimeSessionEntries: new Map(),
+    });
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-rollback",
+        toolName: "guardian_rollback_deployment",
+        params: {
+          idempotencyKey: "attempt-1",
+          target: { type: "kubernetes_deployment_rollback_v1" },
+        },
+      },
+      {
+        runId: "run-rollback",
+        sessionKey: "agent:main:run-rollback",
+      },
+    );
+
+    expect(decision).toEqual({
+      block: true,
+      blockReason:
+        "guardian_rollback_deployment requires persisted incident state",
+    });
+  });
+
+  it("blocks guardian_rollback_deployment for a target outside the administrator allowlist", async () => {
+    const sessionKey = "agent:main:run-rollback";
+    const runtimeSessionEntries = new Map<string, unknown>();
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      kubernetesConfig: {
+        clusterId: "guardian-step3-kind",
+        kubeconfigPath: "/etc/guardian/kubeconfig",
+        allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+      },
+      runtimeSessionEntries,
+    });
+    const target: RemediationTarget = {
+      type: "kubernetes_deployment_rollback_v1",
+      clusterId: "guardian-step3-kind",
+      namespace: "default",
+      deployment: "other-deployment",
+      deploymentUid: "deployment-uid-1",
+      fromRevision: 2,
+      toRevision: 1,
+      fromTemplateSha256: "1".repeat(64),
+      toTemplateSha256: "2".repeat(64),
+    };
+    const at = "2026-08-03T00:00:00.000Z";
+    const created = reduceAlertDelivery(undefined, {
+      alertId: "alert-1",
+      fingerprint: "fingerprint-1",
+      alertStatus: "firing",
+      startsAt: at,
+      endsAt: null,
+      receivedAt: at,
+      deliveryId: "delivery-1",
+    });
+    if (!created.state) {
+      throw new Error("fixture incident was not created");
+    }
+    const metric = inspectMetricSnapshot({
+      alertId: "alert-1",
+      metric: "payment_success_rate",
+      currentValue: 0.7,
+      baselineValue: 1,
+      source: "prometheus:payment_success_rate",
+    });
+    const proposal = proposeRemediation({
+      alertId: "alert-1",
+      metric: "payment_success_rate",
+      classification: metric.classification,
+    });
+    let state = recordMetricEvidence(created.state, metric, at);
+    state = recordRemediationProposal(state, proposal, at);
+    state = recordApprovalDecision(state, true, at);
+    const started = beginRemediationAttempt(state, {
+      idempotencyKey: "attempt-1",
+      target,
+      startedAt: at,
+    });
+    if (started.decision !== "started") {
+      throw new Error(`fixture attempt did not start: ${started.decision}`);
+    }
+    runtimeSessionEntries.set(sessionKey, runtimeEntryFor(started.state));
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-rollback",
+        toolName: "guardian_rollback_deployment",
+        params: { idempotencyKey: "attempt-1", target },
+      },
+      {
+        runId: "run-rollback",
+        sessionKey,
+      },
+    );
+
+    expect(decision).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining("outside the administrator allowlist"),
+    });
+  });
+
+  it("allows a legitimate guardian_rollback_deployment call when runtime.getSessionEntry returns the persisted incident", async () => {
+    const sessionKey = "agent:main:run-rollback-ok";
+    const runtimeSessionEntries = new Map<string, unknown>();
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      kubernetesConfig: {
+        clusterId: "guardian-step3-kind",
+        kubeconfigPath: "/etc/guardian/kubeconfig",
+        allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
+      },
+      runtimeSessionEntries,
+    });
+    const target: RemediationTarget = {
+      type: "kubernetes_deployment_rollback_v1",
+      clusterId: "guardian-step3-kind",
+      namespace: "guardian-step3",
+      deployment: "payments-step3",
+      deploymentUid: "deployment-uid-1",
+      fromRevision: 2,
+      toRevision: 1,
+      fromTemplateSha256: "1".repeat(64),
+      toTemplateSha256: "2".repeat(64),
+    };
+    const at = "2026-08-03T00:00:00.000Z";
+    const created = reduceAlertDelivery(undefined, {
+      alertId: "alert-1",
+      fingerprint: "fingerprint-1",
+      alertStatus: "firing",
+      startsAt: at,
+      endsAt: null,
+      receivedAt: at,
+      deliveryId: "delivery-1",
+    });
+    if (!created.state) {
+      throw new Error("fixture incident was not created");
+    }
+    const metric = inspectMetricSnapshot({
+      alertId: "alert-1",
+      metric: "payment_success_rate",
+      currentValue: 0.7,
+      baselineValue: 1,
+      source: "prometheus:payment_success_rate",
+    });
+    const proposal = proposeRemediation({
+      alertId: "alert-1",
+      metric: "payment_success_rate",
+      classification: metric.classification,
+    });
+    let state = recordMetricEvidence(created.state, metric, at);
+    state = recordRemediationProposal(state, proposal, at);
+    state = recordApprovalDecision(state, true, at);
+    const started = beginRemediationAttempt(state, {
+      idempotencyKey: "attempt-1",
+      target,
+      startedAt: at,
+    });
+    if (started.decision !== "started") {
+      throw new Error(`fixture attempt did not start: ${started.decision}`);
+    }
+    runtimeSessionEntries.set(sessionKey, runtimeEntryFor(started.state));
+
+    // getSessionExtension is deliberately wired to throw: guardian_rollback_deployment's
+    // gate must never consult it (see src/hooks/runtime-incident-state-reader.ts).
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-rollback-ok",
+        toolName: "guardian_rollback_deployment",
+        params: { idempotencyKey: "attempt-1", target },
+      },
+      {
+        runId: "run-rollback-ok",
+        sessionKey,
+        getSessionExtension: () => {
+          throw new Error("must not be called for guardian_rollback_deployment");
+        },
+      },
+    );
+
+    expect(decision).toBeUndefined();
+  });
+
+  it("blocks guardian_rollback_deployment when api.runtime.agent.session.getSessionEntry throws", async () => {
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      runtimeGetSessionEntryThrows: true,
+    });
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-rollback",
+        toolName: "guardian_rollback_deployment",
+        params: {
+          idempotencyKey: "attempt-1",
+          target: { type: "kubernetes_deployment_rollback_v1" },
+        },
+      },
+      {
+        runId: "run-rollback",
+        sessionKey: "agent:main:run-rollback",
+      },
+    );
+
+    expect(decision).toEqual({
+      block: true,
+      blockReason:
+        "guardian_rollback_deployment requires persisted incident state",
+    });
+  });
+
+  it("blocks guardian_rollback_deployment when the runtime-provided incident fails schema validation", async () => {
+    const sessionKey = "agent:main:run-rollback-bad-schema";
+    const runtimeSessionEntries = new Map<string, unknown>([
+      [sessionKey, runtimeEntryFor({ schemaVersion: 2, alertId: "legacy-alert" })],
+    ]);
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      runtimeSessionEntries,
+    });
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-rollback",
+        toolName: "guardian_rollback_deployment",
+        params: {
+          idempotencyKey: "attempt-1",
+          target: { type: "kubernetes_deployment_rollback_v1" },
+        },
+      },
+      {
+        runId: "run-rollback",
+        sessionKey,
+      },
+    );
+
+    expect(decision).toMatchObject({
+      block: true,
+      blockReason: expect.stringContaining("cannot read incident state"),
     });
   });
 
