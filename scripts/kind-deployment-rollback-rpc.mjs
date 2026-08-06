@@ -4,8 +4,13 @@ import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 
 import { createIncidentOccurrenceId, readIncidentStateV3 } from "../dist/state/incident-state.js";
 import { reduceAlertDelivery } from "../dist/state/incident-reducer.js";
-import { beginRemediationAttempt, recordApprovalDecision } from "../dist/state/incident-workflow.js";
 import { reconcileIncidentOnRestart } from "../dist/state/restart-reconciliation.js";
+import { GatewayIncidentClient } from "../dist/alertmanager/http-bridge/gateway-incident-client.js";
+import { authorizeRemediationWithLobster } from "../dist/runtime/lobster-remediation-entry.js";
+import {
+  buildLobsterApprovalResumeRequest,
+  buildLobsterApprovalRunRequest,
+} from "../dist/runtime/lobster-approval-payload.js";
 import {
   createKubernetesDeploymentClient,
   resolveKubernetesToolConfig,
@@ -20,8 +25,6 @@ import {
 } from "../dist/kubernetes/deployment-rollback.js";
 import { KubernetesDeploymentRollbackReconciler } from "../dist/kubernetes/deployment-rollback-reconciler.js";
 
-const PLUGIN_ID = "dataops-guardian";
-const NAMESPACE = "incident";
 const SESSION_KEY = "agent:main:dataops-guardian-kind-deployment-rollback";
 const SECOND_OCCURRENCE_SESSION_KEY =
   "agent:main:dataops-guardian-kind-deployment-rollback-second-occurrence";
@@ -99,31 +102,63 @@ const client = new GatewayClient({
   onConnectError: rejectReady,
 });
 
-async function patchState(sessionKey, state) {
-  const result = await client.request("sessions.pluginPatch", {
-    key: sessionKey,
-    pluginId: PLUGIN_ID,
-    namespace: NAMESPACE,
-    value: state,
-  });
-  if (JSON.stringify(result.value) !== JSON.stringify(state)) {
-    throw new Error("Gateway returned an unexpected incident state after patch");
-  }
-}
+const incidentStore = new GatewayIncidentClient({
+  url: `ws://127.0.0.1:${GATEWAY_PORT}`,
+  token: GATEWAY_TOKEN,
+  clientDisplayName: "dataops-guardian-kind-deployment-rollback-state-writer",
+  requestTimeoutMs: 20_000,
+  connectTimeoutMs: 15_000,
+});
 
 async function readState(sessionKey) {
-  const result = await client.request("sessions.describe", { key: sessionKey });
-  const projection = result.session?.pluginExtensions?.find(
-    (entry) => entry.pluginId === PLUGIN_ID && entry.namespace === NAMESPACE,
-  );
-  if (!projection?.value) {
+  const value = await incidentStore.describeIncidentState(sessionKey);
+  if (!value) {
     throw new Error(`incident state is missing for ${sessionKey}`);
   }
-  const decoded = readIncidentStateV3(projection.value);
+  const decoded = readIncidentStateV3(value);
   if (!decoded.ok) {
     throw new Error(`incident state decode failed for ${sessionKey}: ${decoded.error}`);
   }
   return decoded.state;
+}
+
+async function requestLobsterApproval(sessionKey, occurrenceId) {
+  const run = await client.request(
+    "tools.invoke",
+    buildLobsterApprovalRunRequest(sessionKey, occurrenceId),
+  );
+  assert(run.ok === true, `Lobster approval workflow failed to start: ${JSON.stringify(run)}`);
+  const details = run.output?.details;
+  const resumeToken = details?.requiresApproval?.resumeToken;
+  assert(
+    details?.status === "needs_approval" && resumeToken,
+    `Lobster did not pause for approval: ${JSON.stringify(details)}`,
+  );
+
+  const resumed = await client.request(
+    "tools.invoke",
+    buildLobsterApprovalResumeRequest(sessionKey, resumeToken),
+  );
+  assert(resumed.ok === true, `Lobster approval workflow failed to resume: ${JSON.stringify(resumed)}`);
+  const resumedDetails = resumed.output?.details;
+  assert(
+    resumedDetails?.status === "ok",
+    `Lobster approval workflow did not complete: ${JSON.stringify(resumedDetails)}`,
+  );
+  return { approved: true, workflowStatus: resumedDetails.status };
+}
+
+async function authorizeRollback(sessionKey, approvalState, idempotencyKey, target) {
+  return authorizeRemediationWithLobster({
+    sessionKey,
+    approvalState,
+    idempotencyKey,
+    target,
+    decidedAt: now(),
+    startedAt: now(),
+    writer: incidentStore,
+    requestApproval: () => requestLobsterApproval(sessionKey, approvalState.occurrenceId),
+  });
 }
 
 async function invokeRollbackTool(sessionKey, idempotencyKey, target) {
@@ -136,6 +171,10 @@ async function invokeRollbackTool(sessionKey, idempotencyKey, target) {
 
 function buildIdempotencyKey(occurrenceId, target) {
   return `guardian:k8s-rollback:v1:${occurrenceId}:${target.deploymentUid}:${target.fromRevision}:${target.toRevision}:attempt-1`;
+}
+
+function deploymentImage(record) {
+  return record.deployment.spec?.template?.spec?.containers?.[0]?.image ?? null;
 }
 
 /**
@@ -239,12 +278,6 @@ async function prepare(rawKubernetesConfig) {
   const kubernetesConfig = resolveKubernetesToolConfig({ kubernetes: rawKubernetesConfig });
   const { target } = await discoverRollbackTarget(kubernetesConfig);
 
-  await client.request("sessions.create", {
-    key: SESSION_KEY,
-    agentId: "main",
-    label: "DataOps Guardian kind Deployment rollback proof",
-  });
-
   const startsAt = now();
   const created = reduceAlertDelivery(undefined, {
     alertId: "kind-deployment-rollback-proof",
@@ -262,20 +295,14 @@ async function prepare(rawKubernetesConfig) {
     ...state,
     stage: "approval",
     proposedAction: "kubernetes_deployment_rollback",
+    approvalStatus: "pending",
     evidenceValidation: { status: "passed", checkedAt: startsAt, issues: [] },
     updatedAt: startsAt,
   };
-  state = recordApprovalDecision(state, true, startsAt);
-  await patchState(SESSION_KEY, state);
 
   const idempotencyKey = buildIdempotencyKey(state.occurrenceId, target);
-  const started = beginRemediationAttempt(state, {
-    idempotencyKey,
-    target,
-    startedAt: now(),
-  });
-  assert(started.decision === "started", `remediation attempt did not start: ${started.decision}`);
-  await patchState(SESSION_KEY, started.state);
+  const authorized = await authorizeRollback(SESSION_KEY, state, idempotencyKey, target);
+  assert(authorized.decision === "started", `remediation was not authorized: ${authorized.decision}`);
 
   await writeResume({
     sessionKey: SESSION_KEY,
@@ -285,7 +312,17 @@ async function prepare(rawKubernetesConfig) {
   });
 
   process.stdout.write(
-    `${JSON.stringify({ ok: true, command: "prepare", idempotencyKey, target })}\n`,
+    `${JSON.stringify({
+      ok: true,
+      command: "prepare",
+      idempotencyKey,
+      target,
+      approvalEntry: "authorizeRemediationWithLobster",
+      workflowStatus: authorized.workflowStatus,
+      persistedStage: authorized.state.stage,
+      persistedApprovalStatus: authorized.state.approvalStatus,
+      persistedAttemptStatus: authorized.state.remediationAttempts.at(-1)?.status,
+    })}\n`,
   );
 }
 
@@ -352,6 +389,8 @@ async function rollback(rawKubernetesConfig) {
       templateSha256: details.templateSha256,
       fromRevision: record.target.fromRevision,
       newRevision: Number.parseInt(after.revision, 10),
+      imageBefore: deploymentImage(before),
+      imageAfter: deploymentImage(after),
       resourceVersionBefore: before.resourceVersion,
       resourceVersionAfter: after.resourceVersion,
       generationBefore: before.generation,
@@ -380,6 +419,11 @@ async function replay(rawKubernetesConfig) {
       command: "replay",
       decision: details.decision,
       generationUnchanged: after.generation === before.generation,
+      resourceVersionUnchanged: after.resourceVersion === before.resourceVersion,
+      generationBefore: before.generation,
+      generationAfter: after.generation,
+      resourceVersionBefore: before.resourceVersion,
+      resourceVersionAfter: after.resourceVersion,
     })}\n`,
   );
 }
@@ -439,12 +483,6 @@ async function postRestartReplay(rawKubernetesConfig) {
 }
 
 async function deniedTarget() {
-  await client.request("sessions.create", {
-    key: DENIED_SESSION_KEY,
-    agentId: "main",
-    label: "DataOps Guardian kind Deployment rollback denied-target proof",
-  });
-
   const startsAt = now();
   const created = reduceAlertDelivery(undefined, {
     alertId: "kind-deployment-rollback-denied-proof",
@@ -460,10 +498,10 @@ async function deniedTarget() {
     ...created.state,
     stage: "approval",
     proposedAction: "kubernetes_deployment_rollback",
+    approvalStatus: "pending",
     evidenceValidation: { status: "passed", checkedAt: startsAt, issues: [] },
     updatedAt: startsAt,
   };
-  state = recordApprovalDecision(state, true, startsAt);
 
   const deniedTargetValue = {
     type: "kubernetes_deployment_rollback_v1",
@@ -477,13 +515,13 @@ async function deniedTarget() {
     toTemplateSha256: "2".repeat(64),
   };
   const idempotencyKey = buildIdempotencyKey(state.occurrenceId, deniedTargetValue);
-  const started = beginRemediationAttempt(state, {
+  const authorized = await authorizeRollback(
+    DENIED_SESSION_KEY,
+    state,
     idempotencyKey,
-    target: deniedTargetValue,
-    startedAt: now(),
-  });
-  assert(started.decision === "started", `denied-target attempt did not start: ${started.decision}`);
-  await patchState(DENIED_SESSION_KEY, started.state);
+    deniedTargetValue,
+  );
+  assert(authorized.decision === "started", `denied-target attempt was not authorized: ${authorized.decision}`);
 
   const invocation = await client.request("tools.invoke", {
     name: "guardian_rollback_deployment",
@@ -519,7 +557,7 @@ async function reconcile(rawKubernetesConfig) {
   );
   assert(result.state.stage === "recovery_check", `unexpected post-reconciliation stage: ${result.state.stage}`);
 
-  await patchState(record.sessionKey, result.state);
+  await incidentStore.persistIncidentState(record.sessionKey, result.state);
 
   process.stdout.write(
     `${JSON.stringify({
@@ -559,12 +597,6 @@ async function secondOccurrence(rawKubernetesConfig) {
   const { target } = await discoverRollbackTarget(kubernetesConfig);
   const before = await readDeploymentGeneration(kubernetesConfig);
 
-  await client.request("sessions.create", {
-    key: SECOND_OCCURRENCE_SESSION_KEY,
-    agentId: "main",
-    label: "DataOps Guardian kind Deployment rollback proof (second occurrence)",
-  });
-
   const startsAt = now();
   const created = reduceAlertDelivery(undefined, {
     alertId: "kind-deployment-rollback-proof-second-occurrence",
@@ -581,20 +613,22 @@ async function secondOccurrence(rawKubernetesConfig) {
     ...state,
     stage: "approval",
     proposedAction: "kubernetes_deployment_rollback",
+    approvalStatus: "pending",
     evidenceValidation: { status: "passed", checkedAt: startsAt, issues: [] },
     updatedAt: startsAt,
   };
-  state = recordApprovalDecision(state, true, startsAt);
-  await patchState(SECOND_OCCURRENCE_SESSION_KEY, state);
 
   const idempotencyKey = buildIdempotencyKey(state.occurrenceId, target);
-  const started = beginRemediationAttempt(state, {
+  const authorized = await authorizeRollback(
+    SECOND_OCCURRENCE_SESSION_KEY,
+    state,
     idempotencyKey,
     target,
-    startedAt: now(),
-  });
-  assert(started.decision === "started", `second-occurrence remediation attempt did not start: ${started.decision}`);
-  await patchState(SECOND_OCCURRENCE_SESSION_KEY, started.state);
+  );
+  assert(
+    authorized.decision === "started",
+    `second-occurrence remediation was not authorized: ${authorized.decision}`,
+  );
 
   const invocation = await invokeRollbackTool(SECOND_OCCURRENCE_SESSION_KEY, idempotencyKey, target);
   assert(invocation.ok === true, `second-occurrence rollback tool call failed: ${JSON.stringify(invocation)}`);
@@ -626,9 +660,14 @@ async function show() {
 
 async function run() {
   client.start();
-  await Promise.race([
-    ready,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("gateway connect timeout")), 15_000)),
+  await Promise.all([
+    Promise.race([
+      ready,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("gateway connect timeout")), 15_000),
+      ),
+    ]),
+    incidentStore.connect(),
   ]);
 
   const rawKubernetesConfig = JSON.parse(process.env.GUARDIAN_KUBERNETES_CONFIG_JSON ?? "{}");
@@ -657,5 +696,8 @@ async function run() {
 try {
   await run();
 } finally {
-  await client.stopAndWait({ timeoutMs: 2_000 });
+  await Promise.all([
+    client.stopAndWait({ timeoutMs: 2_000 }),
+    incidentStore.close(),
+  ]);
 }

@@ -19,14 +19,18 @@ DEPLOYMENT="$GUARDIAN_STEP3_DEPLOYMENT"
 OTHER_DEPLOYMENT="other-step3"
 ADMIN_KUBECONFIG="$RUNTIME_DIR/admin-kubeconfig.yaml"
 SCOPED_KUBECONFIG="$RUNTIME_DIR/scoped-kubeconfig.yaml"
+GUARDIAN_PLUGIN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"
+LOBSTER_PLUGIN_DIR="$RUNTIME_DIR/plugins/lobster"
 
 export OPENCLAW_STATE_DIR="$RUNTIME_DIR/openclaw"
+export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-19187}"
 export OPENCLAW_GATEWAY_TOKEN
 OPENCLAW_GATEWAY_TOKEN="$(
   node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))'
 )"
 export OPENCLAW_KIND_ROLLBACK_RESUME_FILE="$RUNTIME_DIR/resume.json"
+export LOBSTER_STATE_DIR="$RUNTIME_DIR/lobster-state"
 
 GATEWAY_PID=""
 CLUSTER_CREATED=false
@@ -34,7 +38,7 @@ CLUSTER_CREATED=false
 wait_for_tcp_port() {
   local port="$1"
   local label="$2"
-  for _ in $(seq 1 80); do
+  for _ in $(seq 1 480); do
     if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
       exec 3>&-
       exec 3<&-
@@ -57,7 +61,10 @@ start_gateway() {
     --auth token \
     --allow-unconfigured >"$log_file" 2>&1 &
   GATEWAY_PID=$!
-  wait_for_tcp_port "$OPENCLAW_GATEWAY_PORT" "Gateway"
+  if ! wait_for_tcp_port "$OPENCLAW_GATEWAY_PORT" "Gateway"; then
+    tail -n 200 "$log_file" >&2 || true
+    return 1
+  fi
 }
 
 stop_gateway() {
@@ -92,6 +99,15 @@ run_rpc() {
 mkdir -p "$RUNTIME_DIR" "$OPENCLAW_STATE_DIR"
 cd "$ROOT_DIR"
 npm run build
+
+# OpenClaw rejects plugin roots reported as world-writable. Windows-mounted
+# worktrees appear as mode 777 under WSL even when their Windows ACL is safe,
+# so stage only the two proof plugins in this proof-owned /tmp directory.
+mkdir -p "$GUARDIAN_PLUGIN_DIR" "$LOBSTER_PLUGIN_DIR"
+cp "$ROOT_DIR/package.json" "$ROOT_DIR/openclaw.plugin.json" "$GUARDIAN_PLUGIN_DIR/"
+cp -R "$ROOT_DIR/dist" "$GUARDIAN_PLUGIN_DIR/dist"
+ln -s "$ROOT_DIR/node_modules" "$GUARDIAN_PLUGIN_DIR/node_modules"
+cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/." "$LOBSTER_PLUGIN_DIR/"
 
 # --- 1. Cluster and workload fixture: revision 1 (v1) then revision 2 (v2). ---
 kind create cluster \
@@ -200,16 +216,26 @@ KUBERNETES_CONFIG_JSON="$(
 # gateway-client, mode: backend, token auth), so there is no Control UI
 # device-pairing surface to disable here -- token auth and loopback binding
 # are the only authentication boundaries in play, unchanged from before.
-"$ROOT_DIR/node_modules/.bin/openclaw" plugins install --link "$ROOT_DIR" >/dev/null
+PLUGIN_LOAD_PATHS="$(
+  node -e '
+    process.stdout.write(JSON.stringify(process.argv.slice(1)));
+  ' "$GUARDIAN_PLUGIN_DIR" "$LOBSTER_PLUGIN_DIR"
+)"
+"$ROOT_DIR/node_modules/.bin/openclaw" config set plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
+"$ROOT_DIR/node_modules/.bin/openclaw" config set \
+  plugins.entries.dataops-guardian.enabled true >/dev/null
+"$ROOT_DIR/node_modules/.bin/openclaw" config set plugins.entries.lobster.enabled true >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set gateway.mode local >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
   gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
   "plugins.entries.dataops-guardian.config.kubernetes" "$KUBERNETES_CONFIG_JSON" >/dev/null
+"$ROOT_DIR/node_modules/.bin/openclaw" config set tools.alsoAllow '["lobster"]' >/dev/null
 
 start_gateway "$RUNTIME_DIR/gateway-1.log"
 
-# --- 4. Persist an approved incident, discover the real target, roll back. ---
+# --- 4. Run the production Lobster approval/remediation entry, persist its
+# durable checkpoints through GatewayIncidentClient, then roll back. ---
 PREPARE_JSON="$(run_rpc prepare)"
 ROLLBACK_JSON="$(run_rpc rollback)"
 REPLAY_JSON="$(run_rpc replay)"
@@ -302,11 +328,19 @@ node -e '
     ok: true,
     proof: "kind-deployment-rollback",
     realRollbackApplied: rollbackResult.decision === "rolled_back",
+    productionApprovalEntry: prepareResult.approvalEntry,
+    lobsterWorkflowStatus: prepareResult.workflowStatus,
+    persistedApprovalStatus: prepareResult.persistedApprovalStatus,
+    persistedRemediationStage: prepareResult.persistedStage,
+    persistedAttemptStatusBeforeRollback: prepareResult.persistedAttemptStatus,
     rollbackFromRevision: rollbackResult.fromRevision,
     rollbackNewRevision: rollbackResult.newRevision,
+    rollbackImageBefore: rollbackResult.imageBefore,
+    rollbackImageAfter: rollbackResult.imageAfter,
     firstOccurrenceMutationDispatchCount: 1,
     replayDecision: replayResult.decision,
     replayGenerationUnchanged: replayResult.generationUnchanged,
+    replayResourceVersionUnchanged: replayResult.resourceVersionUnchanged,
     deniedTargetBlocked: deniedResult.denied === true,
     postRestartGateReadSucceeded: postRestartReplayResult.gateAllowed === true,
     postRestartReplayDecision: postRestartReplayResult.decision,
