@@ -19,7 +19,7 @@ import type { RemediationTarget } from "../state/incident-state.js";
 const KUBERNETES_NAME_PATTERN = "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$";
 const SHA256_HEX_PATTERN = "^[0-9a-f]{64}$";
 
-const rollbackTargetSchema = Type.Object(
+export const KUBERNETES_DEPLOYMENT_ROLLBACK_TARGET_SCHEMA = Type.Object(
   {
     type: Type.Literal(KUBERNETES_DEPLOYMENT_ROLLBACK_TARGET_TYPE),
     clusterId: Type.String({ minLength: 1, maxLength: 253 }),
@@ -45,7 +45,7 @@ const rollbackTargetSchema = Type.Object(
 export const ROLLBACK_DEPLOYMENT_TOOL_PARAMETERS = Type.Object(
   {
     idempotencyKey: Type.String({ minLength: 1, maxLength: 512 }),
-    target: rollbackTargetSchema,
+    target: KUBERNETES_DEPLOYMENT_ROLLBACK_TARGET_SCHEMA,
   },
   { additionalProperties: false },
 );

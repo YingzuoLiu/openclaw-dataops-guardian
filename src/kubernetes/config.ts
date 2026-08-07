@@ -9,6 +9,14 @@ const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 export type KubernetesAllowlistEntry = {
   namespace: string;
   deployment: string;
+  recovery?: KubernetesRecoveryPolicy;
+};
+
+export type KubernetesRecoveryPolicy = {
+  prometheusQuery: string;
+  comparator: "gte" | "lte";
+  threshold: number;
+  maxSampleAgeSeconds: number;
 };
 
 export type KubernetesToolConfig = {
@@ -35,6 +43,51 @@ function isValidResourceName(value: unknown): value is string {
     value.length <= 253 &&
     NAME_PATTERN.test(value)
   );
+}
+
+function parseRecoveryPolicy(
+  value: unknown,
+  path: string,
+): KubernetesRecoveryPolicy | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const record = readRecord(value);
+  if (!record) {
+    throw new Error(`${path} must be an object`);
+  }
+  const prometheusQuery =
+    typeof record.prometheusQuery === "string"
+      ? record.prometheusQuery.trim()
+      : "";
+  if (!prometheusQuery || prometheusQuery.length > 2_048) {
+    throw new Error(
+      `${path}.prometheusQuery must be a non-empty string of at most 2048 characters`,
+    );
+  }
+  if (!new Set(["gte", "lte"]).has(record.comparator as string)) {
+    throw new Error(`${path}.comparator must be gte or lte`);
+  }
+  if (typeof record.threshold !== "number" || !Number.isFinite(record.threshold)) {
+    throw new Error(`${path}.threshold must be a finite number`);
+  }
+  const maxSampleAgeSeconds = record.maxSampleAgeSeconds;
+  if (
+    typeof maxSampleAgeSeconds !== "number" ||
+    !Number.isInteger(maxSampleAgeSeconds) ||
+    maxSampleAgeSeconds < 1 ||
+    maxSampleAgeSeconds > 86_400
+  ) {
+    throw new Error(
+      `${path}.maxSampleAgeSeconds must be an integer from 1 through 86400`,
+    );
+  }
+  return {
+    prometheusQuery,
+    comparator: record.comparator as "gte" | "lte",
+    threshold: record.threshold,
+    maxSampleAgeSeconds,
+  };
 }
 
 /**
@@ -88,11 +141,42 @@ export function resolveKubernetesToolConfig(
           `kubernetes.allowlist[${index}] must be {namespace, deployment} valid Kubernetes names`,
         );
       }
-      return { namespace: record.namespace, deployment: record.deployment };
+      const recovery = parseRecoveryPolicy(
+        record.recovery,
+        `kubernetes.allowlist[${index}].recovery`,
+      );
+      return {
+        namespace: record.namespace,
+        deployment: record.deployment,
+        ...(recovery ? { recovery } : {}),
+      };
     },
   );
 
   return { clusterId, kubeconfigPath, allowlist };
+}
+
+export function requireRecoveryPolicy(
+  config: KubernetesToolConfig,
+  namespace: string,
+  deployment: string,
+): KubernetesRecoveryPolicy {
+  const entry = config.allowlist.find(
+    (candidate) =>
+      candidate.namespace === namespace &&
+      candidate.deployment === deployment,
+  );
+  if (!entry) {
+    throw new Error(
+      `target rejected by administrator allowlist: ${namespace}/${deployment}`,
+    );
+  }
+  if (!entry.recovery) {
+    throw new Error(
+      `administrator recovery policy is missing for ${namespace}/${deployment}`,
+    );
+  }
+  return entry.recovery;
 }
 
 export function isAllowlistedTarget(

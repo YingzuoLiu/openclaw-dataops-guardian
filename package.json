@@ -36,7 +36,8 @@
     "state:restart-reconciliation-proof": "bash scripts/run-restart-reconciliation-proof.sh",
     "alertmanager:ingestion-proof": "npm run build && node scripts/alertmanager-ingestion-proof.mjs",
     "alertmanager:http-bridge-proof": "bash scripts/run-alertmanager-http-bridge-proof.sh",
-    "kubernetes:kind-rollback-proof": "bash scripts/run-kind-deployment-rollback-proof.sh"
+    "kubernetes:kind-rollback-proof": "bash scripts/run-kind-deployment-rollback-proof.sh",
+    "recovery:kind-prometheus-proof": "bash scripts/run-kind-prometheus-recovery-proof.sh"
   },
   "dependencies": {
     "@kubernetes/client-node": "1.4.0",

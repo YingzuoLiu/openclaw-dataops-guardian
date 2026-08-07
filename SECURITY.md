@@ -23,12 +23,17 @@ internal hostnames, and production metric values.
 - Prometheus access is read-only and the endpoint is administrator-owned.
 - Credentials embedded in `prometheusBaseUrl` are rejected.
 - Bearer-token, mTLS, and cloud-provider authentication are not implemented.
+- Kubernetes mutation is limited to a configured cluster context and exact
+  namespace/Deployment allowlist; callers cannot supply a kubeconfig, API
+  server, arbitrary patch, or shell command.
+- Recovery requires the same succeeded attempt binding, matching Deployment
+  UID/template/audit annotations, ready replicas, and a fresh
+  administrator-owned Prometheus threshold check.
 - The Agent response gate is bounded and can fail open after its revision
   budget; durable Reducer and Tool gates are the action boundary.
-- Included remediation is synthetic and does not mutate production.
-- Local proof scripts bind fixtures to loopback and use isolated state. Their
-  temporary device-auth bypass must never be copied into a normal Gateway
-  profile.
+- Local proof scripts bind fixtures to loopback, use isolated state and kind
+  clusters, and remove temporary credentials and clusters on exit. They must
+  never be pointed at a normal Gateway profile or production cluster.
 
 Operators remain responsible for network isolation, OpenClaw channel and Tool
 permissions, secret storage, log retention, and review of any future
