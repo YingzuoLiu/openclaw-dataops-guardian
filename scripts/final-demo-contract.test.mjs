@@ -69,6 +69,11 @@ describe("final demo source contract", () => {
       'chmod -R go-w "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"',
     );
     expect(fast).toContain('tail -n 120 "$CURRENT_LOG"');
+    expect(fast).toContain("export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1");
+    expect(fast).toContain("run_bounded 120s env");
+    expect(fast).toContain("run_bounded 420s env");
+    expect(fast).toContain("run_bounded 300s env");
+    expect(fast).toContain("progress \"$CURRENT_COMPONENT\"");
     expect(fast).toContain(
       'GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR"',
     );
@@ -100,6 +105,8 @@ describe("final demo source contract", () => {
       "run-kind-prometheus-recovery-proof.sh",
       "final-proof-report.mjs full",
     ]);
+    expect(full).toContain("run_bounded 1800s env");
+    expect(full).toContain("GUARDIAN_FINAL_PROGRESS_FD=3");
   });
 
   it("uses one run-owned kind cluster and performs the complete live safety sequence", async () => {
@@ -133,6 +140,8 @@ describe("final demo source contract", () => {
     expect(runner).toContain('kill -0 "$pid"');
     expect(runner).toContain('`${ports.join(" ")}\\n`');
     expect(runner).toContain("kind safety proof failed during ${CURRENT_PHASE}");
+    expect(runner).toContain("export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1");
+    expect(runner).toContain("progress \"$CURRENT_PHASE\"");
     expect(runner).toContain(
       'max(payment_success_rate{service="payments",environment="proof"}) or vector(0)',
     );

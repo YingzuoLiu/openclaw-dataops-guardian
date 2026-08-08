@@ -10,6 +10,15 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/guardian-kind-prometheus-recovery.XXXXXX")"
 FINAL_DEMO="${GUARDIAN_FINAL_DEMO:-0}"
 CURRENT_PHASE="initialization"
+PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
+
+# The proof loads Guardian and Lobster explicitly. Unrelated bundled extensions
+# are not part of the safety matrix and can appear world-writable on DrvFS.
+export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
+
+progress() {
+  printf '[demo:kind] %s\n' "$1" >&"$PROGRESS_FD"
+}
 RUN_SUFFIX="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(4).toString("hex"))')"
 if [[ "$FINAL_DEMO" == "1" ]]; then
   read -r DEFAULT_GATEWAY_PORT DEFAULT_PROMETHEUS_PORT DEFAULT_BRIDGE_PORT < <(
@@ -66,7 +75,6 @@ else
 fi
 
 export OPENCLAW_STATE_DIR="$RUNTIME_DIR/openclaw"
-export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-$DEFAULT_GATEWAY_PORT}"
 export OPENCLAW_GATEWAY_TOKEN
 OPENCLAW_GATEWAY_TOKEN="$(
@@ -383,6 +391,7 @@ load_proof_image() {
 }
 
 CURRENT_PHASE="final-demo prerequisite checks"
+progress "$CURRENT_PHASE"
 if [[ "$FINAL_DEMO" == "1" ]]; then
   : "${GUARDIAN_FINAL_REPORT_PATH:?GUARDIAN_FINAL_REPORT_PATH is required for the final demo}"
   if [[ -e "$GUARDIAN_FINAL_REPORT_PATH" || -L "$GUARDIAN_FINAL_REPORT_PATH" ]]; then
@@ -414,6 +423,7 @@ fi
 assert_proof_ports_available
 
 CURRENT_PHASE="build and plugin staging"
+progress "$CURRENT_PHASE"
 mkdir -p "$RUNTIME_DIR" "$OPENCLAW_STATE_DIR"
 cd "$ROOT_DIR"
 npm run build
@@ -428,6 +438,7 @@ cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/." "$LOBSTER_PLUGIN_DIR/"
 
 # --- 1. Isolated cluster and pinned proof images. ---
 CURRENT_PHASE="kind cluster creation"
+progress "$CURRENT_PHASE"
 KIND_CREATE_ARGS=(
   --name "$CLUSTER_NAME"
   --kubeconfig "$ADMIN_KUBECONFIG"
@@ -442,6 +453,7 @@ fi
 kind create cluster "${KIND_CREATE_ARGS[@]}"
 CLUSTER_CREATED=true
 CURRENT_PHASE="pinned proof image import"
+progress "$CURRENT_PHASE"
 NODE_PLATFORM="$(kind_node_platform)"
 load_proof_image "$NGINX_SOURCE_IMAGE" "$NGINX_IMAGE" "$NODE_PLATFORM"
 load_proof_image "$PROMETHEUS_SOURCE_IMAGE" "$PROMETHEUS_IMAGE" "$NODE_PLATFORM"
@@ -449,6 +461,7 @@ kubectl --kubeconfig "$ADMIN_KUBECONFIG" create namespace "$NAMESPACE"
 
 # --- 2. Real workload: revision 1 exports a healthy metric. ---
 CURRENT_PHASE="healthy workload bootstrap"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   create configmap payments-metrics-healthy \
   --from-literal=metrics=$'# HELP payment_success_rate Proof success ratio\n# TYPE payment_success_rate gauge\npayment_success_rate{service="payments",environment="proof"} 1\n'
@@ -512,6 +525,7 @@ kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
 
 # --- 3. Real Prometheus scraping the workload Service every second. ---
 CURRENT_PHASE="Prometheus bootstrap"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   create configmap prometheus-step4-config --from-file=prometheus.yml=/dev/stdin <<EOF
 global:
@@ -586,6 +600,7 @@ wait_for_prometheus_value "1" "healthy revision 1"
 
 # --- 4. Revision 2 degrades the real scraped metric to 0.7. ---
 CURRENT_PHASE="degraded metric observation"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   patch deployment "$DEPLOYMENT" --type=json \
   -p='[{"op":"replace","path":"/spec/template/spec/volumes/0/configMap/name","value":"payments-metrics-unhealthy"}]'
@@ -607,6 +622,7 @@ fi
 
 # --- 5. Scoped write/read credential for only the workload Deployment. ---
 CURRENT_PHASE="scoped Kubernetes authorization setup"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   create serviceaccount guardian-step4
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
@@ -676,6 +692,7 @@ KUBERNETES_CONFIG_JSON="$(
 
 # --- 6. Gateway configuration. Endpoint/query/policy remain admin-owned. ---
 CURRENT_PHASE="Gateway startup"
+progress "$CURRENT_PHASE"
 PLUGIN_LOAD_PATHS="$(
   node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
     "$GUARDIAN_PLUGIN_DIR" "$LOBSTER_PLUGIN_DIR"
@@ -753,6 +770,7 @@ fi
 
 # --- 7. Final HTTP ingress, Tool evidence, approve/deny, and ambiguous restart. ---
 CURRENT_PHASE="HTTP ingress and approval denial"
+progress "$CURRENT_PHASE"
 start_bridge "$RUNTIME_DIR/bridge-1.log"
 PREPARE_JSON="$(run_rpc prepare-http)"
 DENIED_JSON="$(run_rpc denied-approval)"
@@ -761,6 +779,7 @@ run_rpc prepare-ambiguous >/dev/null
 stop_bridge
 stop_gateway
 CURRENT_PHASE="ambiguous restart and target authorization"
+progress "$CURRENT_PHASE"
 start_gateway "$RUNTIME_DIR/gateway-2.log"
 start_bridge "$RUNTIME_DIR/bridge-2.log"
 AMBIGUOUS_JSON="$(run_rpc reconcile-ambiguous)"
@@ -768,6 +787,7 @@ OFF_TARGET_JSON="$(run_rpc off-target)"
 
 # --- 8. The one authorized mutation, immediate replay, and restart replay. ---
 CURRENT_PHASE="authorized rollback and replay"
+progress "$CURRENT_PHASE"
 ROLLBACK_JSON="$(run_rpc rollback)"
 REPLAY_ROLLBACK_JSON="$(run_rpc replay-rollback)"
 stop_bridge
@@ -776,10 +796,12 @@ start_gateway "$RUNTIME_DIR/gateway-3.log"
 start_bridge "$RUNTIME_DIR/bridge-3.log"
 POST_RESTART_REPLAY_JSON="$(run_rpc replay-rollback)"
 CURRENT_PHASE="restart reconciliation"
+progress "$CURRENT_PHASE"
 RECONCILE_JSON="$(run_rpc reconcile)"
 
 # --- 9. Resolved is not recovery; scale-to-zero must fail dual recovery. ---
 CURRENT_PHASE="negative recovery verification"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   rollout status deployment "$DEPLOYMENT" --timeout=120s
 wait_for_prometheus_value "1" "post-rollback workload"
@@ -803,6 +825,7 @@ NEGATIVE_CHECKED_AT="$(
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   scale deployment "$DEPLOYMENT" --replicas=1
 CURRENT_PHASE="positive dual recovery verification"
+progress "$CURRENT_PHASE"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" --namespace "$NAMESPACE" \
   rollout status deployment "$DEPLOYMENT" --timeout=120s
 wait_for_prometheus_value_after "1" "$NEGATIVE_CHECKED_AT" "restored workload"
@@ -810,6 +833,7 @@ RECOVERY_JSON="$(run_rpc verify-recovery)"
 
 # --- 10. A fresh Gateway must read completion and block recovery replay. ---
 CURRENT_PHASE="completion restart and replay protection"
+progress "$CURRENT_PHASE"
 stop_bridge
 stop_gateway
 start_gateway "$RUNTIME_DIR/gateway-4.log"
@@ -819,6 +843,7 @@ stop_gateway
 
 # --- 11. Scoped credential cannot operate outside the exact authority. ---
 CURRENT_PHASE="scoped RBAC denial checks"
+progress "$CURRENT_PHASE"
 trap - ERR
 set +e
 kubectl --kubeconfig "$SCOPED_KUBECONFIG" --namespace "$NAMESPACE" \
@@ -860,6 +885,7 @@ RBAC_JSON='{"otherDeploymentDenied":true,"otherNamespaceDenied":true,"secretsDen
 
 # --- 12. Explicit cleanup before releasing the sanitized report. ---
 CURRENT_PHASE="explicit cleanup verification"
+progress "$CURRENT_PHASE"
 stop_bridge
 stop_gateway
 stop_port_forward
@@ -888,6 +914,7 @@ unset OPENCLAW_GATEWAY_TOKEN ALERTMANAGER_BRIDGE_TOKEN KUBERNETES_CONFIG_JSON
 CLEANUP_JSON='{"gatewayStopped":true,"bridgeStopped":true,"portForwardStopped":true,"clusterDeleted":true,"localImageTagsDeleted":true,"temporaryCredentialsDeleted":true}'
 
 CURRENT_PHASE="sanitized kind report generation"
+progress "$CURRENT_PHASE"
 node scripts/final-proof-report.mjs kind \
   "$PREPARE_JSON" \
   "$DENIED_JSON" \

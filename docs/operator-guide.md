@@ -140,7 +140,10 @@ HTTP bridge and crash-window checks, and synthetic approve/deny paths. It uses
 isolated OpenClaw state directories and loopback-only fixtures, with no Docker,
 cluster, paid API, or external model. Proof clients temporarily disable device
 authentication only inside their disposable local profiles and restore it on
-exit. Never point a proof script at a normal Gateway profile.
+exit. The runner explicitly loads Guardian and Lobster while disabling discovery
+of unrelated bundled extensions, so a WSL checkout under `/mnt/c` does not fail
+on DrvFS world-writable modes. Never point a proof script at a normal Gateway
+profile.
 
 To run the full release proof on Linux/WSL with a reachable Docker daemon,
 `kind`, and `kubectl`:
@@ -149,10 +152,11 @@ To run the full release proof on Linux/WSL with a reachable Docker daemon,
 npm run demo
 ```
 
-On success, it emits only an allowlisted JSON summary after cleanup. On failure,
-it emits a bounded tail of the active local proof log before cleanup. See the
-[final safety proof](final-safety-proof.md) for the complete positive and
-negative matrix.
+While running, it emits phase names only and applies component deadlines when
+the standard Linux `timeout` command is available. On success, it emits only an
+allowlisted JSON summary after cleanup. On failure, it emits a bounded tail of
+the active local proof log before cleanup. See the [final safety
+proof](final-safety-proof.md) for the complete positive and negative matrix.
 
 ## Safety model
 

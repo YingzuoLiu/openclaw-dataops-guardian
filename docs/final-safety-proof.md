@@ -23,7 +23,10 @@ npm run demo:fast
 
 `demo:fast` uses Bash, Node.js, isolated OpenClaw profiles, loopback services,
 and a scripted local model. It does not use Docker, Kubernetes, an external
-model, or a paid API. It aggregates:
+model, or a paid API. It disables discovery of unrelated OpenClaw bundled
+extensions and explicitly loads only the proof-owned Guardian and Lobster
+copies. This keeps the proof valid when WSL DrvFS presents a checkout's
+`node_modules` as world-writable. It aggregates:
 
 | Component | Required result |
 |---|---|
@@ -43,7 +46,10 @@ npm run demo
 
 The full command runs `demo:fast`, creates one uniquely named disposable kind
 cluster, and releases its machine-readable JSON proof only after the live
-matrix and cleanup assertions pass. It uses no paid API or external model.
+matrix and cleanup assertions pass. It uses no paid API or external model. Both
+runners emit phase-only progress, bound component runtime when the standard
+Linux `timeout` command is available, and retain the existing bounded
+diagnostic-tail behavior on failure.
 
 ## End-to-end path
 

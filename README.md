@@ -138,7 +138,13 @@ On success, both commands release only an allowlisted, sanitized JSON summary.
 On failure, they emit a bounded tail of the active local proof log before
 temporary cleanup so that the cause is not discarded. The full command deletes
 its isolated cluster and temporary credentials before it emits a success
-report. See the [final proof contract](docs/final-safety-proof.md).
+report. Both runners print only phase names while they work and impose bounded
+component deadlines when the standard Linux `timeout` command is available. The
+proofs also disable discovery of unrelated OpenClaw bundled extensions; Guardian
+and Lobster remain explicitly loaded from proof-owned paths. This avoids false
+world-writable warnings when a checkout and its `node_modules` live on WSL DrvFS
+under `/mnt/c`. See the
+[final proof contract](docs/final-safety-proof.md).
 
 ## Reproducible proof suite
 

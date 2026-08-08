@@ -11,6 +11,26 @@ STAGED_GUARDIAN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"
 STAGED_LOBSTER_DIR="$RUNTIME_DIR/plugins/lobster"
 CURRENT_COMPONENT="initialization"
 CURRENT_LOG=""
+PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
+
+# The proof explicitly loads Guardian and Lobster. OpenClaw's unrelated bundled
+# extensions are outside this acceptance matrix and DrvFS commonly exposes
+# their package directories as world-writable, so do not discover them here.
+export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
+
+progress() {
+  printf '[demo:fast] %s\n' "$1" >&"$PROGRESS_FD"
+}
+
+run_bounded() {
+  local duration="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout --signal=TERM --kill-after=30s "$duration" "$@"
+  else
+    "$@"
+  fi
+}
 
 cleanup() {
   if [[ -d "$RUNTIME_DIR" && "$RUNTIME_DIR" == /tmp/guardian-final-fast.* ]]; then
@@ -59,6 +79,7 @@ read -r \
 # same load-path boundary as the live proof without copying the dependency tree.
 CURRENT_COMPONENT="safe proof staging"
 CURRENT_LOG="$RUNTIME_DIR/staging.log"
+progress "$CURRENT_COMPONENT"
 {
   npm run build
   mkdir -p "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"
@@ -74,54 +95,65 @@ CURRENT_LOG="$RUNTIME_DIR/staging.log"
 
 CURRENT_COMPONENT="policy registration"
 CURRENT_LOG="$RUNTIME_DIR/policy.log"
-OPENCLAW_STATE_DIR="$RUNTIME_DIR/policy" \
-GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
+progress "$CURRENT_COMPONENT"
+run_bounded 120s env \
+  OPENCLAW_STATE_DIR="$RUNTIME_DIR/policy" \
+  GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-policy-registration-proof.sh >"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="live Agent hook"
 CURRENT_LOG="$RUNTIME_DIR/live-hook.log"
-OPENCLAW_STATE_DIR="$RUNTIME_DIR/live-hook" \
-OPENCLAW_GATEWAY_PORT="$LIVE_GATEWAY_PORT" \
-GUARDIAN_MOCK_MODEL_PORT="$LIVE_MODEL_PORT" \
-OPENCLAW_WORKSPACE_DIR="$RUNTIME_DIR/live-hook-workspace" \
-GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
+progress "$CURRENT_COMPONENT"
+run_bounded 180s env \
+  OPENCLAW_STATE_DIR="$RUNTIME_DIR/live-hook" \
+  OPENCLAW_GATEWAY_PORT="$LIVE_GATEWAY_PORT" \
+  GUARDIAN_MOCK_MODEL_PORT="$LIVE_MODEL_PORT" \
+  OPENCLAW_WORKSPACE_DIR="$RUNTIME_DIR/live-hook-workspace" \
+  GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-live-hook-invocation-proof.sh >"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="Alertmanager HTTP bridge"
 CURRENT_LOG="$RUNTIME_DIR/bridge.log"
-OPENCLAW_GATEWAY_PORT="$BRIDGE_GATEWAY_PORT" \
-ALERTMANAGER_BRIDGE_PORT="$BRIDGE_HTTP_PORT" \
-GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
+progress "$CURRENT_COMPONENT"
+run_bounded 420s env \
+  OPENCLAW_GATEWAY_PORT="$BRIDGE_GATEWAY_PORT" \
+  ALERTMANAGER_BRIDGE_PORT="$BRIDGE_HTTP_PORT" \
+  GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-alertmanager-http-bridge-proof.sh >"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="synthetic approval"
 CURRENT_LOG="$RUNTIME_DIR/approve.log"
-OPENCLAW_STATE_DIR="$RUNTIME_DIR/approve" \
-OPENCLAW_GATEWAY_PORT="$APPROVE_GATEWAY_PORT" \
-GUARDIAN_MOCK_PROMETHEUS_PORT="$APPROVE_PROMETHEUS_PORT" \
-OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-approve" \
-OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/approve-resume.json" \
-LOBSTER_STATE_DIR="$RUNTIME_DIR/approve-lobster" \
-GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
-GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
-GUARDIAN_PROOF_DECISION=approve \
+progress "$CURRENT_COMPONENT"
+run_bounded 300s env \
+  OPENCLAW_STATE_DIR="$RUNTIME_DIR/approve" \
+  OPENCLAW_GATEWAY_PORT="$APPROVE_GATEWAY_PORT" \
+  GUARDIAN_MOCK_PROMETHEUS_PORT="$APPROVE_PROMETHEUS_PORT" \
+  OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-approve" \
+  OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/approve-resume.json" \
+  LOBSTER_STATE_DIR="$RUNTIME_DIR/approve-lobster" \
+  GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
+  GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
+  GUARDIAN_PROOF_DECISION=approve \
   bash scripts/run-vertical-slice-proof.sh >"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="synthetic denial"
 CURRENT_LOG="$RUNTIME_DIR/deny.log"
-OPENCLAW_STATE_DIR="$RUNTIME_DIR/deny" \
-OPENCLAW_GATEWAY_PORT="$DENY_GATEWAY_PORT" \
-GUARDIAN_MOCK_PROMETHEUS_PORT="$DENY_PROMETHEUS_PORT" \
-OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-deny" \
-OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/deny-resume.json" \
-LOBSTER_STATE_DIR="$RUNTIME_DIR/deny-lobster" \
-GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
-GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
-GUARDIAN_PROOF_DECISION=deny \
+progress "$CURRENT_COMPONENT"
+run_bounded 300s env \
+  OPENCLAW_STATE_DIR="$RUNTIME_DIR/deny" \
+  OPENCLAW_GATEWAY_PORT="$DENY_GATEWAY_PORT" \
+  GUARDIAN_MOCK_PROMETHEUS_PORT="$DENY_PROMETHEUS_PORT" \
+  OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-deny" \
+  OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/deny-resume.json" \
+  LOBSTER_STATE_DIR="$RUNTIME_DIR/deny-lobster" \
+  GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
+  GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
+  GUARDIAN_PROOF_DECISION=deny \
   bash scripts/run-vertical-slice-proof.sh >"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="sanitized summary"
 CURRENT_LOG=""
+progress "$CURRENT_COMPONENT"
 node scripts/final-proof-report.mjs fast \
   "$RUNTIME_DIR/policy.log" \
   "$RUNTIME_DIR/live-hook.log" \

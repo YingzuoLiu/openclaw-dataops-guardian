@@ -17,8 +17,9 @@ semantic versioning for its source tags; it is not published to npm or ClawHub.
   `completed`.
 - No-cost `demo:fast` and a one-cluster `demo` with positive and negative safety
   cases, an allowlisted JSON report, and explicit cleanup verification.
-- WSL-safe temporary plugin staging for Windows-mounted checkouts, with bounded
-  active-component diagnostics on failed proof runs.
+- WSL-safe temporary plugin staging for Windows-mounted checkouts, explicit
+  exclusion of unrelated bundled extensions, phase-only progress, bounded
+  component deadlines, and active-component diagnostics on failed proof runs.
 
 ### Security
 

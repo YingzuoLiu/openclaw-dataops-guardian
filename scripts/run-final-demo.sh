@@ -4,6 +4,23 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/guardian-final-demo.XXXXXX")"
 CURRENT_COMPONENT="prerequisite checks"
+PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
+
+progress() {
+  printf '[demo] %s\n' "$1" >&"$PROGRESS_FD"
+}
+
+run_bounded() {
+  local duration="$1"
+  shift
+  if command -v timeout >/dev/null 2>&1; then
+    # Leave enough time for the child runner's EXIT trap to delete its cluster,
+    # images, credentials, and temporary files after the deadline signal.
+    timeout --signal=TERM --kill-after=300s "$duration" "$@"
+  else
+    "$@"
+  fi
+}
 
 cleanup() {
   if [[ -d "$RUNTIME_DIR" && "$RUNTIME_DIR" == "${TMPDIR:-/tmp}"/guardian-final-demo.* ]]; then
@@ -47,13 +64,21 @@ if ! docker info >/dev/null 2>&1; then
 fi
 
 CURRENT_COMPONENT="fast proof"
-bash scripts/run-final-fast-demo.sh >"$RUNTIME_DIR/fast.json" 2>"$RUNTIME_DIR/fast.log"
+progress "$CURRENT_COMPONENT"
+GUARDIAN_FINAL_PROGRESS_FD=3 \
+  bash scripts/run-final-fast-demo.sh \
+  3>&2 >"$RUNTIME_DIR/fast.json" 2>"$RUNTIME_DIR/fast.log"
 
 CURRENT_COMPONENT="kind safety proof"
-GUARDIAN_FINAL_DEMO=1 \
-GUARDIAN_FINAL_REPORT_PATH="$RUNTIME_DIR/kind.json" \
-  bash scripts/run-kind-prometheus-recovery-proof.sh >"$RUNTIME_DIR/kind.log" 2>&1
+progress "$CURRENT_COMPONENT"
+run_bounded 1800s env \
+  GUARDIAN_FINAL_DEMO=1 \
+  GUARDIAN_FINAL_REPORT_PATH="$RUNTIME_DIR/kind.json" \
+  GUARDIAN_FINAL_PROGRESS_FD=3 \
+  bash scripts/run-kind-prometheus-recovery-proof.sh \
+  3>&2 >"$RUNTIME_DIR/kind.log" 2>&1
 
 CURRENT_COMPONENT="sanitized summary"
+progress "$CURRENT_COMPONENT"
 node scripts/final-proof-report.mjs full \
   "$RUNTIME_DIR/fast.json" "$RUNTIME_DIR/kind.json"
