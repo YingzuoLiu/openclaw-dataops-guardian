@@ -12,9 +12,8 @@ become the authority to mutate infrastructure?** The answer in this repository
 is a durable state machine surrounded by deterministic Tool, Reducer, approval,
 allowlist, idempotency, and finalization gates.
 
-> **Current status:** Steps 1-4 are complete. Step 5 is implemented and its
-> deterministic checks and no-cost fast demo pass; the final one-cluster WSL
-> acceptance run is still pending. The release-candidate demo drives a real
+> **Current status:** All five steps are complete, and the final one-cluster
+> WSL acceptance run passed on 2026-08-08. The accepted demo drives a real
 > Alertmanager HTTP delivery through durable Gateway state, evidence Tools,
 > resumable approval, one allowlisted kind mutation, restart reconciliation,
 > and dual Deployment/Prometheus recovery. This is a safety-focused prototype,
@@ -53,7 +52,7 @@ Deployment instead of blindly issuing another mutation.
 
 ## Results
 
-- **Final safety proof candidate (Step 5):** `npm run demo` combines the no-cost fast
+- **Final safety proof (Step 5, 2026-08-08):** `npm run demo` combines the no-cost fast
   suite with one isolated kind cluster. Its allowlisted JSON report is emitted
   only after every positive and negative assertion passes and the cluster,
   Gateway, bridge, port-forward, kubeconfigs, and temporary credentials have
@@ -167,7 +166,7 @@ requires the caller to supply `OPENROUTER_API_KEY`.
 | 2b | Authenticated HTTP bridge and durable delivery checkpoints | Complete | [PR #7](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/7) |
 | 3 | Real, gated, allowlisted Kubernetes Deployment rollback in kind | Complete | [PR #8](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/8) |
 | 4 | Real post-rollback Deployment and Prometheus recovery verification | Complete | [Recovery contract and proof command](docs/deployment-prometheus-recovery.md) |
-| 5 | Complete fault/safety proof and final reproducible demo | Implementation complete; full WSL acceptance pending | [Final safety proof and demo](docs/final-safety-proof.md) |
+| 5 | Complete fault/safety proof and final reproducible demo | Complete | [Final safety proof and demo](docs/final-safety-proof.md) |
 
 ## Security model and non-goals
 
@@ -212,7 +211,7 @@ end-to-end negative and positive cases.
 ## Version contract
 
 - Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
-- OpenClaw `2026.6.34` for the release-candidate compatibility proofs
+- OpenClaw `2026.6.34` for the `v0.2.0` compatibility proofs
 - Lobster plugin `2026.6.34` for approval/resume compatibility
 - Plugin/Gateway compatibility floor `>=2026.6.34`
 
