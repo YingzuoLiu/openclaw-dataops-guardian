@@ -3,7 +3,7 @@
 All notable changes to DataOps Guardian are recorded here. The project follows
 semantic versioning for its source tags; it is not published to npm or ClawHub.
 
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-08-08
 
 ### Added
 
