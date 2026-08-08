@@ -1,4 +1,8 @@
-# Alertmanager HTTP bridge
+# Alertmanager HTTP bridge (Step 2b)
+
+Status: **implemented and proven**. This document defines the standalone
+receiver component; [Step 5](final-safety-proof.md) composes it with the real
+investigation, approval, rollback, restart, and recovery path.
 
 Step 2b adds an external HTTP receiver that terminates real Alertmanager
 webhook traffic and drives the existing ingestion boundary

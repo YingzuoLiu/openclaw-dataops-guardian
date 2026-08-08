@@ -1,4 +1,7 @@
-# IncidentState schema v3
+# IncidentState schema v3 (Step 1)
+
+Status: **implemented and proven**. The state and reconciliation contracts are
+also exercised by the [Step 5 final safety demo](final-safety-proof.md).
 
 Schema v3 adds alert occurrence identity, bounded webhook delivery
 deduplication, and durable remediation-attempt history. It is a state-layer
@@ -90,10 +93,11 @@ Step 2 callers must handle the decision through an exhaustive switch with a
 `never` assertion. This makes an omitted `deferred_new_occurrence` branch a
 compile-time failure instead of silently applying `new_occurrence` behavior.
 
-The follow-on Alertmanager ingestion boundary now implements the exhaustive
-decision planner and deterministic held-delivery checkpoint shape. Durable
-checkpoint storage, HTTP acknowledgement, and session/RPC routing remain the
-responsibility of a future external bridge. See `docs/alertmanager-ingestion.md`.
+The Step 2a Alertmanager ingestion boundary implements the exhaustive decision
+planner and deterministic held-delivery checkpoint shape. The Step 2b external
+bridge now owns durable checkpoint storage, HTTP acknowledgement, and
+session/RPC routing. See [the ingestion boundary](alertmanager-ingestion.md)
+and [HTTP bridge](alertmanager-http-bridge.md).
 
 ### Restart reconciliation for running attempts
 
@@ -104,7 +108,8 @@ valid and `running` after restart. It continues to reject a different attempt
 key and causes later occurrences to return `deferred_new_occurrence`.
 
 `ExternalRemediationReconciler` is the boundary between the state machine and a
-future target-specific audit implementation. It receives the persisted attempt's
+target-specific audit implementation. Step 3 supplies the read-only Kubernetes
+Deployment implementation. The interface receives the persisted attempt's
 existing `idempotencyKey`, `target`, and `startedAt`. It can return only:
 
 ```text
@@ -157,9 +162,10 @@ bridge restarts before that acknowledgement, it replays the same `deliveryId`
 to the same occurrence so the existing delivery deduplication handles the
 repeat. The coordinator itself never silently consumes the held delivery.
 
-This contract does not implement an Alertmanager receiver, Kubernetes access,
-or rollback execution. A future external adapter must provide the target-specific
-read/audit operation behind `ExternalRemediationReconciler`.
+This Step 1 contract itself does not implement an Alertmanager receiver,
+Kubernetes access, or rollback execution. Those responsibilities are supplied
+by the later bridge and Kubernetes components; the state boundary remains
+independent of them.
 
 `alertId` may change between occurrences; this is intentional because
 fingerprint and `startsAt` define occurrence routing. Within one occurrence,

@@ -68,7 +68,7 @@ export class GatewayIncidentClient {
       token: options.token,
       clientName: "gateway-client",
       clientDisplayName: options.clientDisplayName,
-      clientVersion: "2026.6.9",
+      clientVersion: "2026.6.34",
       platform: process.platform,
       mode: "backend",
       role: "operator",

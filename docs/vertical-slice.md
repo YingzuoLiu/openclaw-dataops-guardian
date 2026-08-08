@@ -3,6 +3,11 @@
 Status: **passed** locally on 2026-07-18 with `openclaw@2026.6.9` and
 `@openclaw/lobster@2026.6.9`.
 
+> **Milestone scope:** this document records the initial synthetic vertical
+> slice. The completed end-to-end system uses a real Alertmanager bridge,
+> allowlisted Kubernetes rollback, and real Prometheus recovery; see the
+> [Step 5 final safety proof](final-safety-proof.md).
+
 This slice uses the Prometheus HTTP API boundary for its metric input and a
 loopback mock server in the reproducible proof. It exercises the complete
 orchestration and persistence boundary without touching a production metric
@@ -46,9 +51,9 @@ entry retains the exact PromQL as its source:
 4. `lobster_recovery_check`.
 
 `start` creates the schema-v3 incident by passing one synthetic firing delivery
-through the same occurrence reducer used by future ingestion callers. There is
-no separate `openIncident()` constructor. The approved path persists a running
-synthetic remediation attempt before resuming Lobster, then records its
+through the same occurrence reducer used by the later ingestion components.
+There is no separate `openIncident()` constructor. The approved path persists
+a running synthetic remediation attempt before resuming Lobster, then records its
 succeeded result before recovery validation.
 
 ## Denied path
@@ -94,7 +99,7 @@ session-store implementation.
 From the repository root:
 
 ```bash
-npm install
+npm ci
 npm run slice:proof
 ```
 

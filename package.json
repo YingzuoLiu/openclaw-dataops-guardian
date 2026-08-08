@@ -1,25 +1,27 @@
 {
   "name": "openclaw-dataops-guardian",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "A compatibility-first OpenClaw DataOps workflow plugin.",
+  "description": "Evidence-gated incident remediation for OpenClaw with Alertmanager, Prometheus, Lobster, and Kubernetes.",
   "repository": {
     "type": "git",
-    "url": "https://github.com/YingzuoLiu/openclaw-dataops-guardian.git"
+    "url": "git+https://github.com/YingzuoLiu/openclaw-dataops-guardian.git"
   },
   "bugs": {
     "url": "https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues"
   },
   "homepage": "https://github.com/YingzuoLiu/openclaw-dataops-guardian#readme",
   "engines": {
-    "node": ">=22.19.0"
+    "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "check": "npm run build && npm test",
+    "demo:fast": "bash scripts/run-final-fast-demo.sh",
+    "demo": "bash scripts/run-final-demo.sh",
     "plugin:inspect": "openclaw plugins inspect dataops-guardian --runtime --json",
     "policy:proof": "bash scripts/run-policy-registration-proof.sh",
     "hooks:live-proof": "bash scripts/run-live-hook-invocation-proof.sh",
@@ -41,8 +43,8 @@
   },
   "dependencies": {
     "@kubernetes/client-node": "1.4.0",
-    "@openclaw/lobster": "2026.6.9",
-    "openclaw": "2026.6.9",
+    "@openclaw/lobster": "2026.6.34",
+    "openclaw": "2026.6.34",
     "typebox": "1.1.39"
   },
   "devDependencies": {
@@ -55,12 +57,18 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.6.9",
-      "minGatewayVersion": "2026.6.9"
+      "pluginApi": ">=2026.6.34",
+      "minGatewayVersion": "2026.6.34"
     },
     "build": {
-      "openclawVersion": "2026.6.9",
-      "pluginSdkVersion": "2026.6.9"
+      "openclawVersion": "2026.6.34",
+      "pluginSdkVersion": "2026.6.34"
     }
-  }
+  },
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "keywords": [],
+  "author": ""
 }

@@ -12,11 +12,13 @@ become the authority to mutate infrastructure?** The answer in this repository
 is a durable state machine surrounded by deterministic Tool, Reducer, approval,
 allowlist, idempotency, and finalization gates.
 
-> **Current status:** Steps 1-4 are complete and proven. Recovery is real: a
-> rolled-back Deployment and a fresh administrator-owned Prometheus threshold
-> must both pass before an incident reaches `completed`, and that outcome
-> survives a Gateway restart. This is a safety-focused prototype, not a
-> production or multi-cluster remediation system.
+> **Current status:** Steps 1-4 are complete. Step 5 is implemented and its
+> deterministic checks and no-cost fast demo pass; the final one-cluster WSL
+> acceptance run is still pending. The release-candidate demo drives a real
+> Alertmanager HTTP delivery through durable Gateway state, evidence Tools,
+> resumable approval, one allowlisted kind mutation, restart reconciliation,
+> and dual Deployment/Prometheus recovery. This is a safety-focused prototype,
+> not a production or multi-cluster remediation system.
 
 ## System at a glance
 
@@ -47,11 +49,22 @@ Deployment instead of blindly issuing another mutation.
 | Kubernetes mutation | Exact Deployment target, administrator allowlist, UID/revision/template-digest checks, optimistic concurrency, and audit annotations | [Rollback contract](docs/kubernetes-deployment-rollback.md) |
 | Idempotency | The same occurrence and key cannot mutate twice; a genuinely new occurrence can execute a later rollback | [Real kind proof](docs/kubernetes-deployment-rollback.md#running-the-real-kind-proof) |
 | Recovery | Succeeded-attempt binding, audited Deployment readiness, and fresh administrator-owned Prometheus policy must all pass before `completed` | [Step 4 recovery contract](docs/deployment-prometheus-recovery.md) |
+| Final safety proof | Denial, ambiguous restart, off-target/RBAC rejection, resolved-is-not-recovery, scale-to-zero failure, replay protection, sanitization, and cleanup | [Step 5 proof matrix](docs/final-safety-proof.md) |
 
 ## Results
 
-- **Real integration proof (Step 3):** approved rollback changed a kind Deployment from
-  revision 2 to revision 3 and restored the prior PodTemplate
+- **Final safety proof candidate (Step 5):** `npm run demo` combines the no-cost fast
+  suite with one isolated kind cluster. Its allowlisted JSON report is emitted
+  only after every positive and negative assertion passes and the cluster,
+  Gateway, bridge, port-forward, kubeconfigs, and temporary credentials have
+  been cleaned up. The live matrix includes unauthenticated ingress, duplicate
+  delivery, real Gateway evidence Tools, approval denial, ambiguous restart,
+  off-target and RBAC rejection, exactly one rollback dispatch, rollback replay,
+  resolved-is-not-recovery, scale-to-zero, fresh dual recovery, completion
+  replay after a Gateway restart, and independent completion readback. See the
+  [final safety proof](docs/final-safety-proof.md).
+- **Real integration proof (Step 3):** approved rollback changed a kind
+  Deployment from revision 2 to revision 3 and restored the prior PodTemplate
   (`pause:3.10` to `pause:3.9`). Duplicate calls and post-restart replay left
   the Deployment unchanged; a new occurrence remained eligible for a later
   rollback.
@@ -75,8 +88,8 @@ Deployment instead of blindly issuing another mutation.
   | Cluster cleanup | passed |
 
   Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
-- **Automated checks at Step 3 merge:** TypeScript build plus 235 tests across
-  24 test files passed on Node.js 22.19.0 and Node.js 24.
+- **Automated checks:** the TypeScript build and Vitest suite run on Node.js
+  22.22.2 and Node.js 24.15.0 in CI.
 - **Real-model A/B evaluation:** in 24 paired trials, the language-only baseline
   released 3 unsupported conclusions in 12 trials; the gated arm released 0 in
   12. All observed baseline failures came from one deliberately adversarial
@@ -89,7 +102,7 @@ Deployment instead of blindly issuing another mutation.
 
 Prerequisites:
 
-- Node.js `>=22.19.0`
+- Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
 - npm
 
 ```bash
@@ -102,34 +115,34 @@ npm run check
 The standard check is local and does not contact a production monitoring or
 Kubernetes environment.
 
-### Run the strongest integration proof
+### Run the final demos
 
-The Step 3 proof creates and removes its own isolated cluster. It requires a
-Linux/WSL shell, Docker, `kind`, and `kubectl`:
-
-```bash
-npm run kubernetes:kind-rollback-proof
-```
-
-It exercises the real Lobster approval/resume entry, Gateway-backed incident
-checkpoint, Gateway restart readback, allowlisted Deployment rollback,
-occurrence-level idempotency, valid second occurrence, and deterministic
-cleanup.
-
-The Step 4 proof additionally starts a real Prometheus server and a
-one-replica metric-producing workload, degrades and restores it, and verifies
-dual recovery end to end:
+The fast demo uses isolated loopback fixtures and a scripted local model. It
+does not use Docker, Kubernetes, a paid API, or an external model:
 
 ```bash
-npm run recovery:kind-prometheus-proof
+npm run demo:fast
 ```
 
-See [Results](#results) above for the sanitized 2026-08-08 run summary.
+The full release proof runs the fast suite, then creates exactly one disposable
+kind cluster from digest-pinned source images and a scoped ServiceAccount. It
+requires a Linux/WSL Bash shell, a reachable Docker daemon, `kind`, and
+`kubectl`:
+
+```bash
+npm run demo
+```
+
+Both commands release only an allowlisted, sanitized JSON summary. The full
+command deletes its isolated cluster and temporary credentials before it emits
+that report. See the [final proof contract](docs/final-safety-proof.md).
 
 ## Reproducible proof suite
 
 | Command | What it demonstrates |
 |---|---|
+| `npm run demo:fast` | No-cost policy, live Agent hook, HTTP bridge/crash recovery, and synthetic approve/deny summary |
+| `npm run demo` | Complete Step 5 live safety matrix in one disposable kind cluster |
 | `npm run state:v3:restart-proof` | IncidentState v3 persists across Gateway restart |
 | `npm run state:restart-reconciliation-proof` | Interrupted attempts reconcile with external state without duplicate mutation |
 | `npm run alertmanager:ingestion-proof` | Canonicalization, deduplication, and reducer behavior |
@@ -154,7 +167,7 @@ requires the caller to supply `OPENROUTER_API_KEY`.
 | 2b | Authenticated HTTP bridge and durable delivery checkpoints | Complete | [PR #7](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/7) |
 | 3 | Real, gated, allowlisted Kubernetes Deployment rollback in kind | Complete | [PR #8](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/8) |
 | 4 | Real post-rollback Deployment and Prometheus recovery verification | Complete | [Recovery contract and proof command](docs/deployment-prometheus-recovery.md) |
-| 5 | Complete fault/safety proof and final reproducible demo | Planned | Final project completion gate |
+| 5 | Complete fault/safety proof and final reproducible demo | Implementation complete; full WSL acceptance pending | [Final safety proof and demo](docs/final-safety-proof.md) |
 
 ## Security model and non-goals
 
@@ -176,9 +189,10 @@ This repository deliberately does **not** claim:
 
 See [SECURITY.md](SECURITY.md), the
 [operator guide](docs/operator-guide.md) for baseline installation and
-read-only Prometheus configuration, and the
-[rollback contract](docs/kubernetes-deployment-rollback.md) for the Step 3
-mutation boundary.
+read-only Prometheus configuration, the
+[rollback contract](docs/kubernetes-deployment-rollback.md) for the mutation
+boundary, and the [final safety proof](docs/final-safety-proof.md) for the
+end-to-end negative and positive cases.
 
 ## Repository map
 
@@ -191,15 +205,16 @@ mutation boundary.
 | `src/kubernetes/` | Scoped Kubernetes configuration and rollback implementation |
 | `src/recovery/` | Dual Deployment and Prometheus recovery verifier |
 | `workflows/` | Lobster approval workflows |
-| `scripts/` | Local proofs, fixtures, and evaluation runners |
+| `scripts/` | Local component proofs, final demo runners, fixtures, and evaluation runners |
 | `docs/` | Contracts, proof reports, security boundaries, and operator guidance |
+| `CHANGELOG.md` | Source-release history |
 
 ## Version contract
 
-- Node.js `>=22.19.0`
-- OpenClaw `2026.6.9` for the compatibility proofs
-- Lobster plugin `2026.6.9` for approval/resume compatibility
-- Plugin/Gateway compatibility floor `>=2026.6.9`
+- Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
+- OpenClaw `2026.6.34` for the release-candidate compatibility proofs
+- Lobster plugin `2026.6.34` for approval/resume compatibility
+- Plugin/Gateway compatibility floor `>=2026.6.34`
 
 The compatibility range should be widened only after the proofs are repeated
 against newer stable releases.

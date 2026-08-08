@@ -48,7 +48,7 @@ const client = new GatewayClient({
   token: GATEWAY_TOKEN,
   clientName: "openclaw-tui",
   clientDisplayName: "dataops-guardian-vertical-slice",
-  clientVersion: "2026.6.9",
+  clientVersion: "2026.6.34",
   platform: process.platform,
   mode: "ui",
   role: "operator",

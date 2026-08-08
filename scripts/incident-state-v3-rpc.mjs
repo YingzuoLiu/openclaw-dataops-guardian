@@ -115,7 +115,7 @@ const client = new GatewayClient({
   token,
   clientName: "openclaw-tui",
   clientDisplayName: "dataops-guardian-state-v3-restart",
-  clientVersion: "2026.6.9",
+  clientVersion: "2026.6.34",
   platform: process.platform,
   mode: "ui",
   role: "operator",

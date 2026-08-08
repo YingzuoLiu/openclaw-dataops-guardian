@@ -104,28 +104,17 @@ node scripts/live-hook-agent-rpc.mjs >"$RPC_RESULT"
 node --input-type=module - \
   "$GATEWAY_LOG" "$MODEL_REQUESTS" "$RPC_RESULT" "$AUDIT_LOG" "$PROOF_RESULT" <<'NODE'
 import { readFile, writeFile } from "node:fs/promises";
+import { extractGuardianAuditEvents } from "./scripts/gateway-audit-log.mjs";
 
 const [gatewayPath, requestsPath, rpcPath, auditPath, proofPath] =
   process.argv.slice(2);
 const gatewayLog = await readFile(gatewayPath, "utf8");
-const normalizedGatewayLog = gatewayLog.replaceAll('\\"', '"');
 const requestLines = (await readFile(requestsPath, "utf8"))
   .split("\n")
   .filter(Boolean);
 const requests = requestLines.map((line) => JSON.parse(line));
 const rpc = JSON.parse(await readFile(rpcPath, "utf8"));
-const auditEvents = normalizedGatewayLog
-  .split("\n")
-  .map((line) => {
-    const jsonStart = line.indexOf(
-      '{"schemaVersion":1,"component":"dataops-guardian"',
-    );
-    if (jsonStart < 0) {
-      return undefined;
-    }
-    return JSON.parse(line.slice(jsonStart));
-  })
-  .filter(Boolean);
+const auditEvents = extractGuardianAuditEvents(gatewayLog);
 
 const hasActivation = auditEvents
   .some(

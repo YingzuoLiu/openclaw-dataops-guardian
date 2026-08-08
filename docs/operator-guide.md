@@ -1,6 +1,6 @@
 # Operator guide
 
-DataOps Guardian `v0.1.0` is a compatibility-first OpenClaw plugin prototype.
+DataOps Guardian `v0.2.0` is a compatibility-first OpenClaw plugin prototype.
 It provides read-only Prometheus evidence collection, deterministic metric
 inspection, durable incident state, remediation proposals, an allowlisted
 Kubernetes rollback, dual recovery verification, and bounded Agent evidence
@@ -8,12 +8,12 @@ gates. It is not approved for production or unattended remediation.
 
 ## Prerequisites
 
-- Node.js `>=22.19.0`;
-- OpenClaw `>=2026.6.9`;
+- Node.js `22.22.2+` on the Node 22 line, `24.15.0+` on Node 24, or Node 26+;
+- OpenClaw `>=2026.6.34`;
 - a dedicated OpenClaw profile for Guardian Agent runs;
 - a Prometheus-compatible instant-query endpoint reachable by the Gateway.
 
-Guardian `v0.1.0` does not implement bearer-token, mTLS, or managed-Prometheus
+Guardian `v0.2.0` does not implement bearer-token, mTLS, or managed-Prometheus
 authentication. Do not put credentials in a URL. For a non-public Prometheus
 deployment, use a network-restricted endpoint or a trusted local proxy that
 owns authentication.
@@ -24,7 +24,7 @@ Guardian is not published to npm or ClawHub. Pin the source tag, install its
 dependencies, build it, and link the checkout into OpenClaw:
 
 ```bash
-git clone --branch v0.1.0 --depth 1 \
+git clone --branch v0.2.0 --depth 1 \
   https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
 cd openclaw-dataops-guardian
 npm ci
@@ -36,7 +36,7 @@ openclaw plugins enable dataops-guardian
 PowerShell uses the same flow with the current directory resolved explicitly:
 
 ```powershell
-git clone --branch v0.1.0 --depth 1 `
+git clone --branch v0.2.0 --depth 1 `
   https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
 Set-Location openclaw-dataops-guardian
 npm ci
@@ -60,6 +60,20 @@ openclaw config set \
   plugins.entries.dataops-guardian.config.prometheusTimeoutMs \
   5000
 ```
+
+This baseline installation is intentionally read-only. The standalone
+Alertmanager HTTP bridge is a separate operator process and is not started by
+installing or enabling the plugin. Kubernetes mutation is disabled unless an
+administrator separately supplies a cluster identity, scoped kubeconfig, and
+exact namespace/Deployment allowlist. Do not add that configuration to a
+general-purpose profile merely to try the project.
+
+For the complete integration proof, use `npm run demo`: it creates its own
+disposable kind cluster, exact allowlist, short-lived scoped credential, and
+loopback bridge, then removes them. The component contracts document the
+[bridge configuration](alertmanager-http-bridge.md) and
+[rollback authority](kubernetes-deployment-rollback.md) without making either
+part of the safe baseline install.
 
 Non-bundled plugins require explicit consent before conversation hooks can
 observe an Agent run:
@@ -118,15 +132,26 @@ Run deterministic local verification from the checkout:
 
 ```bash
 npm run check
-npm run policy:proof
-npm run hooks:live-proof
-npm run slice:proof
+npm run demo:fast
 ```
 
-The proof scripts create isolated OpenClaw state directories and loopback-only
-fixtures. They temporarily disable device authentication for their own local
-RPC clients and restore it on exit. Never point a proof script at a normal
-Gateway profile.
+The fast demo aggregates policy registration, a live Agent finalize gate, the
+HTTP bridge and crash-window checks, and synthetic approve/deny paths. It uses
+isolated OpenClaw state directories and loopback-only fixtures, with no Docker,
+cluster, paid API, or external model. Proof clients temporarily disable device
+authentication only inside their disposable local profiles and restore it on
+exit. Never point a proof script at a normal Gateway profile.
+
+To run the full release proof on Linux/WSL with a reachable Docker daemon,
+`kind`, and `kubectl`:
+
+```bash
+npm run demo
+```
+
+It emits only an allowlisted JSON summary after cleanup. See the
+[final safety proof](final-safety-proof.md) for the complete positive and
+negative matrix.
 
 ## Safety model
 
@@ -149,8 +174,9 @@ Gateway profile.
 
 See [the evidence-gate contract](evidence-gates.md),
 [Prometheus adapter contract](prometheus-adapter.md), and
-[Step 4 recovery contract](deployment-prometheus-recovery.md) for the exact
-invariants.
+[Step 4 recovery contract](deployment-prometheus-recovery.md) for the component
+invariants, and [the Step 5 final proof](final-safety-proof.md) for their
+end-to-end composition.
 
 ## Logs and troubleshooting
 
@@ -164,7 +190,7 @@ Common failures:
 | --- | --- |
 | Conversation hooks have loader diagnostics | Set `hooks.allowConversationAccess=true`, restart, and inspect the live runtime again. |
 | Prometheus query reports missing configuration | Set `prometheusBaseUrl` in plugin config; the Agent cannot provide it. |
-| Prometheus rejects authentication | `v0.1.0` has no credential provider; use a trusted proxy instead of credentials in the URL. |
+| Prometheus rejects authentication | `v0.2.0` has no credential provider; use a trusted proxy instead of credentials in the URL. |
 | Proposal Tool is blocked | Confirm both query and inspection Tools succeeded in the same Agent run. |
 | Log warns about a rejected run-context write | Guardian is using its bounded process-local fallback for the active run; durable incident state is unaffected. |
 
