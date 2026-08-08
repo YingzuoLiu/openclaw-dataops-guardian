@@ -2,8 +2,9 @@
 
 DataOps Guardian `v0.1.0` is a compatibility-first OpenClaw plugin prototype.
 It provides read-only Prometheus evidence collection, deterministic metric
-inspection, durable incident state, remediation proposals, and bounded Agent
-evidence gates. It does not execute a production rollback.
+inspection, durable incident state, remediation proposals, an allowlisted
+Kubernetes rollback, dual recovery verification, and bounded Agent evidence
+gates. It is not approved for production or unattended remediation.
 
 ## Prerequisites
 
@@ -101,7 +102,9 @@ The inspection should have no diagnostics and should expose these Tools:
 
 - `guardian_query_prometheus`;
 - `guardian_inspect_metric_snapshot`;
-- `guardian_propose_remediation`.
+- `guardian_propose_remediation`;
+- `guardian_rollback_deployment`;
+- `guardian_verify_deployment_recovery`.
 
 With conversation access enabled, it should also expose five typed hooks:
 
@@ -127,21 +130,27 @@ Gateway profile.
 
 ## Safety model
 
-- The Agent supplies PromQL but cannot choose the Prometheus base URL.
+- Investigation PromQL may be Agent-supplied, but the Agent cannot choose the
+  Prometheus base URL. Recovery PromQL, comparator, threshold, and maximum
+  sample age are administrator-owned on the exact allowlist entry.
 - Prometheus queries must return exactly one finite instant-vector sample.
 - Failed Tools do not satisfy the run evidence ledger.
 - A remediation proposal is blocked until both required evidence Tools succeed.
 - Durable incident state refuses an unsupported transition into approval.
 - `before_agent_finalize` requests at most one revision; it is not a permanent
   message-delivery veto.
+- Recovery requires both audited Deployment readiness and a fresh
+  post-remediation Prometheus sample. An Alertmanager resolved event is not
+  proof.
 - Recovery may retry remediation twice; the third unhealthy check moves the
   incident to `blocked`.
-- The included Lobster remediation and recovery steps are synthetic and set
-  `mutatesProduction: false`.
+- Real mutation remains limited to the administrator-allowlisted Deployment
+  rollback. The repository proof targets only a disposable kind cluster.
 
 See [the evidence-gate contract](evidence-gates.md),
 [Prometheus adapter contract](prometheus-adapter.md), and
-[first vertical slice](vertical-slice.md) for the exact invariants.
+[Step 4 recovery contract](deployment-prometheus-recovery.md) for the exact
+invariants.
 
 ## Logs and troubleshooting
 

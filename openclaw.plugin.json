@@ -7,7 +7,8 @@
       "guardian_inspect_metric_snapshot",
       "guardian_propose_remediation",
       "guardian_query_prometheus",
-      "guardian_rollback_deployment"
+      "guardian_rollback_deployment",
+      "guardian_verify_deployment_recovery"
     ]
   },
   "toolMetadata": {
@@ -21,6 +22,9 @@
       "optional": false
     },
     "guardian_rollback_deployment": {
+      "optional": false
+    },
+    "guardian_verify_deployment_recovery": {
       "optional": false
     }
   },
@@ -78,7 +82,35 @@
               "required": ["namespace", "deployment"],
               "properties": {
                 "namespace": { "type": "string" },
-                "deployment": { "type": "string" }
+                "deployment": { "type": "string" },
+                "recovery": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "prometheusQuery",
+                    "comparator",
+                    "threshold",
+                    "maxSampleAgeSeconds"
+                  ],
+                  "properties": {
+                    "prometheusQuery": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 2048,
+                      "description": "Administrator-owned PromQL used for post-rollback recovery verification."
+                    },
+                    "comparator": {
+                      "type": "string",
+                      "enum": ["gte", "lte"]
+                    },
+                    "threshold": { "type": "number" },
+                    "maxSampleAgeSeconds": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 86400
+                    }
+                  }
+                }
               }
             }
           }

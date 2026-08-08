@@ -303,6 +303,7 @@ export function recordRecoveryCheck(
     healthy: boolean;
     summary: string;
     checkedAt: string;
+    source?: string;
   },
 ): IncidentState {
   const withEvidence: IncidentState = {
@@ -310,7 +311,7 @@ export function recordRecoveryCheck(
     evidence: [
       ...state.evidence,
       {
-        source: "lobster_recovery_check",
+        source: params.source ?? "lobster_recovery_check",
         observedAt: params.checkedAt,
         summary: params.summary,
       },

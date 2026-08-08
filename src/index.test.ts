@@ -158,6 +158,35 @@ describe("DataOps Guardian plugin hook wiring", () => {
     });
   });
 
+  it("blocks guardian_verify_deployment_recovery when there is no persisted incident state", async () => {
+    const { hooks } = createPluginHarness({
+      requireToolsGateMode: "disabled",
+      runtimeSessionEntries: new Map(),
+    });
+
+    const decision = await hooks.get("before_tool_call")?.(
+      {
+        runId: "run-recovery",
+        toolName: "guardian_verify_deployment_recovery",
+        params: {
+          idempotencyKey: "attempt-1",
+          target: { type: "kubernetes_deployment_rollback_v1" },
+          notBefore: "2026-08-07T00:00:00.000Z",
+        },
+      },
+      {
+        runId: "run-recovery",
+        sessionKey: "agent:main:run-recovery",
+      },
+    );
+
+    expect(decision).toEqual({
+      block: true,
+      blockReason:
+        "guardian_verify_deployment_recovery requires persisted incident state",
+    });
+  });
+
   it("blocks guardian_rollback_deployment for a target outside the administrator allowlist", async () => {
     const sessionKey = "agent:main:run-rollback";
     const runtimeSessionEntries = new Map<string, unknown>();

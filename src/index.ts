@@ -24,7 +24,9 @@ import { createInspectMetricSnapshotTool } from "./tools/inspect-metric-snapshot
 import { createProposeRemediationTool } from "./tools/propose-remediation.js";
 import { createQueryPrometheusTool } from "./tools/query-prometheus.js";
 import { createRollbackDeploymentTool } from "./tools/rollback-deployment.js";
+import { createVerifyDeploymentRecoveryTool } from "./tools/verify-deployment-recovery.js";
 import { buildRollbackDeploymentToolGateDecision } from "./hooks/rollback-deployment-gate.js";
+import { buildVerifyDeploymentRecoveryToolGateDecision } from "./hooks/verify-deployment-recovery-gate.js";
 import { readRuntimeIncidentState } from "./hooks/runtime-incident-state-reader.js";
 
 export {
@@ -57,6 +59,20 @@ export {
   resolveKubernetesToolConfig,
   type KubernetesToolConfig,
 } from "./kubernetes/config.js";
+
+export {
+  inspectDeploymentRecovery,
+  inspectPrometheusRecovery,
+  verifyDeploymentAndPrometheusRecovery,
+  type DeploymentPrometheusRecoveryResult,
+  type DeploymentRecoveryObservation,
+  type PrometheusRecoveryObservation,
+} from "./recovery/deployment-prometheus-recovery.js";
+
+export {
+  persistDeploymentRecoveryVerification,
+  type RecoveryStateStore,
+} from "./runtime/recovery-verification-entry.js";
 
 export {
   ALERTMANAGER_WEBHOOK_VERSION,
@@ -130,12 +146,21 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
     api.registerTool(createProposeRemediationTool());
     api.registerTool(createQueryPrometheusTool(api.pluginConfig));
     api.registerTool(createRollbackDeploymentTool(api.pluginConfig));
+    api.registerTool(createVerifyDeploymentRecoveryTool(api.pluginConfig));
     api.registerToolMetadata({
       toolName: "guardian_inspect_metric_snapshot",
       displayName: "Inspect Metric Snapshot",
       description: "Classify one metric snapshot against its expected baseline.",
       risk: "low",
       tags: ["dataops", "investigation", "read-only"],
+    });
+    api.registerToolMetadata({
+      toolName: "guardian_verify_deployment_recovery",
+      displayName: "Verify Deployment Recovery",
+      description:
+        "Verify the audited Deployment rollout and administrator-configured Prometheus recovery policy.",
+      risk: "low",
+      tags: ["dataops", "kubernetes", "prometheus", "recovery", "read-only"],
     });
     api.registerToolMetadata({
       toolName: "guardian_query_prometheus",
@@ -213,6 +238,18 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
         if (event.toolName === "guardian_rollback_deployment") {
           return buildRollbackDeploymentToolGateDecision({
+            incident: readRuntimeIncidentState(
+              api.runtime,
+              ctx.sessionKey,
+              INCIDENT_STATE_NAMESPACE,
+            ),
+            toolParams: event.params,
+            rawConfig: api.pluginConfig,
+          });
+        }
+
+        if (event.toolName === "guardian_verify_deployment_recovery") {
+          return buildVerifyDeploymentRecoveryToolGateDecision({
             incident: readRuntimeIncidentState(
               api.runtime,
               ctx.sessionKey,

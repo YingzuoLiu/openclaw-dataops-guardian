@@ -23,12 +23,35 @@ internal hostnames, and production metric values.
 - Prometheus access is read-only and the endpoint is administrator-owned.
 - Credentials embedded in `prometheusBaseUrl` are rejected.
 - Bearer-token, mTLS, and cloud-provider authentication are not implemented.
+- Kubernetes mutation is limited to a configured cluster context and exact
+  namespace/Deployment allowlist; callers cannot supply a kubeconfig, API
+  server, arbitrary patch, or shell command.
+- Recovery requires the same succeeded attempt binding, matching Deployment
+  UID/template/audit annotations, ready replicas, and a fresh
+  administrator-owned Prometheus threshold check.
+- `persistDeploymentRecoveryVerification` (`src/runtime/recovery-verification-entry.ts`)
+  is a production persistence boundary, not a Tool: only trusted Gateway/operator
+  code may call it. It re-reads the current `IncidentState` from the store
+  immediately before validating and writing, checks that the supplied result is
+  exactly bound to the succeeded remediation attempt (target, `notBefore`, and
+  an internally consistent `decision`), and records it -- but it never itself
+  queries Kubernetes or Prometheus. It trusts that its caller passed the
+  genuine output of `verifyDeploymentAndPrometheusRecovery`; a compromised or
+  buggy caller with access to this function could still fabricate a passing
+  result and force an incident to `completed`.
+- The Gateway session write path (`sessions.pluginPatch`) has no
+  compare-and-swap or version check today: it is a last-write-wins update.
+  Reading the current state immediately before writing (as
+  `persistDeploymentRecoveryVerification` now does) closes the long
+  stale-snapshot window an external poll loop would otherwise leave open, but
+  it does not add real optimistic-concurrency control. Two genuinely
+  concurrent writers to the same session can still race; this remains a
+  residual infrastructure risk.
 - The Agent response gate is bounded and can fail open after its revision
   budget; durable Reducer and Tool gates are the action boundary.
-- Included remediation is synthetic and does not mutate production.
-- Local proof scripts bind fixtures to loopback and use isolated state. Their
-  temporary device-auth bypass must never be copied into a normal Gateway
-  profile.
+- Local proof scripts bind fixtures to loopback, use isolated state and kind
+  clusters, and remove temporary credentials and clusters on exit. They must
+  never be pointed at a normal Gateway profile or production cluster.
 
 Operators remain responsible for network isolation, OpenClaw channel and Tool
 permissions, secret storage, log retention, and review of any future

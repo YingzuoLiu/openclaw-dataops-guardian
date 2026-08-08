@@ -20,6 +20,13 @@ const validRawConfig = {
   },
 };
 
+const recovery = {
+  prometheusQuery: 'payment_success_rate{service="payments"}',
+  comparator: "gte" as const,
+  threshold: 0.95,
+  maxSampleAgeSeconds: 120,
+};
+
 describe("resolveKubernetesToolConfig", () => {
   it("accepts a well-formed administrator configuration", () => {
     expect(resolveKubernetesToolConfig(validRawConfig)).toEqual({
@@ -27,6 +34,44 @@ describe("resolveKubernetesToolConfig", () => {
       kubeconfigPath: "/etc/guardian/kubeconfig",
       allowlist: [{ namespace: "guardian-step3", deployment: "payments-step3" }],
     });
+  });
+
+  it("parses an administrator-owned recovery policy on an allowlisted target", () => {
+    expect(
+      resolveKubernetesToolConfig({
+        kubernetes: {
+          ...validRawConfig.kubernetes,
+          allowlist: [
+            {
+              namespace: "guardian-step3",
+              deployment: "payments-step3",
+              recovery,
+            },
+          ],
+        },
+      }).allowlist[0],
+    ).toEqual({
+      namespace: "guardian-step3",
+      deployment: "payments-step3",
+      recovery,
+    });
+  });
+
+  it("rejects malformed recovery policy rather than applying defaults", () => {
+    expect(() =>
+      resolveKubernetesToolConfig({
+        kubernetes: {
+          ...validRawConfig.kubernetes,
+          allowlist: [
+            {
+              namespace: "guardian-step3",
+              deployment: "payments-step3",
+              recovery: { ...recovery, threshold: Number.NaN },
+            },
+          ],
+        },
+      }),
+    ).toThrow("threshold must be a finite number");
   });
 
   it("rejects a missing clusterId", () => {
