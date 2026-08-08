@@ -64,11 +64,5 @@
       "openclawVersion": "2026.6.34",
       "pluginSdkVersion": "2026.6.34"
     }
-  },
-  "main": "index.js",
-  "directories": {
-    "doc": "docs"
-  },
-  "keywords": [],
-  "author": ""
+  }
 }
