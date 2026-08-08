@@ -134,6 +134,37 @@ wait_for_prometheus_value() {
   return 1
 }
 
+kind_node_platform() {
+  case "$(docker exec "${CLUSTER_NAME}-control-plane" uname -m)" in
+    x86_64)
+      printf '%s' 'linux/amd64'
+      ;;
+    aarch64 | arm64)
+      printf '%s' 'linux/arm64'
+      ;;
+    *)
+      echo "Unsupported kind node architecture" >&2
+      return 1
+      ;;
+  esac
+}
+
+load_proof_image() {
+  local image="$1"
+  local platform="$2"
+  local node="${CLUSTER_NAME}-control-plane"
+
+  # Docker Desktop handles host proxy routing, including loopback proxies that
+  # are unreachable from the kind node. Import only the node platform into its
+  # containerd store so an incomplete multi-platform host index is harmless.
+  docker pull --platform "$platform" "$image" >/dev/null
+  docker image save "$image" | docker exec -i "$node" \
+    ctr --namespace=k8s.io images import \
+      --platform "$platform" \
+      --digests \
+      --snapshotter=overlayfs - >/dev/null
+}
+
 mkdir -p "$RUNTIME_DIR" "$OPENCLAW_STATE_DIR"
 cd "$ROOT_DIR"
 npm run build
@@ -152,14 +183,9 @@ kind create cluster \
   --kubeconfig "$ADMIN_KUBECONFIG" \
   --wait 120s
 CLUSTER_CREATED=true
-# Pull directly into the kind node's containerd image store. Docker Desktop's
-# containerd-backed host image store can retain a multi-platform manifest while
-# only materializing the current platform. `kind load docker-image` then imports
-# that incomplete index with `--all-platforms` and fails on a missing digest.
-# Pulling through the node's CRI resolves only the node platform and keeps the
-# proof independent of the host Docker image-store implementation.
-docker exec "${CLUSTER_NAME}-control-plane" crictl pull "$NGINX_IMAGE" >/dev/null
-docker exec "${CLUSTER_NAME}-control-plane" crictl pull "$PROMETHEUS_IMAGE" >/dev/null
+NODE_PLATFORM="$(kind_node_platform)"
+load_proof_image "$NGINX_IMAGE" "$NODE_PLATFORM"
+load_proof_image "$PROMETHEUS_IMAGE" "$NODE_PLATFORM"
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" create namespace "$NAMESPACE"
 
 # --- 2. Real workload: revision 1 exports a healthy metric. ---
