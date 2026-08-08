@@ -65,9 +65,9 @@ Operators remain responsible for network isolation, OpenClaw channel and Tool
 permissions, secret storage, log retention, and review of any future
 production-mutating integration.
 
-## Dependency audit for the `v0.2.0` release candidate
+## Dependency audit for `v0.2.0`
 
-The release candidate pins OpenClaw and Lobster to the exact extended-stable
+The `v0.2.0` release pins OpenClaw and Lobster to the exact extended-stable
 `2026.6.34` release and requires Node.js `^22.22.2`, `^24.15.0`, or `>=26`.
 As checked on 2026-08-08, `npm audit --omit=dev` reports no high or critical
 production vulnerabilities. Eleven low/moderate findings remain in OpenClaw's
