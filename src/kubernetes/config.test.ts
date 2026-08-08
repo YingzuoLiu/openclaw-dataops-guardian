@@ -2,7 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { KubeConfig } from "@kubernetes/client-node";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   assertAllowlistedTarget,
@@ -141,15 +142,24 @@ describe("createKubernetesDeploymentClient", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await rm(dir, { recursive: true, force: true });
   });
 
   async function writeKubeconfig(overrides: {
     server?: string;
     contextName?: string;
+    relativeCredentialPaths?: boolean;
   } = {}): Promise<KubernetesToolConfig> {
     const contextName = overrides.contextName ?? "guardian-step3-kind";
     const server = overrides.server ?? "https://127.0.0.1:6443";
+    const clusterCredentials = overrides.relativeCredentialPaths
+      ? "      certificate-authority: pki/ca.crt"
+      : "      insecure-skip-tls-verify: true";
+    const userCredentials = overrides.relativeCredentialPaths
+      ? `      client-certificate: pki/client.crt
+      client-key: pki/client.key`
+      : "      token: fake-token";
     const kubeconfigPath = join(dir, "kubeconfig");
     await writeFile(
       kubeconfigPath,
@@ -159,11 +169,11 @@ clusters:
   - name: guardian-step3-kind
     cluster:
       server: ${server}
-      insecure-skip-tls-verify: true
+${clusterCredentials}
 users:
   - name: guardian-step3-kind
     user:
-      token: fake-token
+${userCredentials}
 contexts:
   - name: ${contextName}
     context:
@@ -185,6 +195,42 @@ current-context: ${contextName}
     const config = await writeKubeconfig();
     const client = await createKubernetesDeploymentClient(config);
     expect(client.apiServer).toBe("https://127.0.0.1:6443/");
+  });
+
+  it("loads the checked document once and anchors relative credential paths", async () => {
+    const config = await writeKubeconfig({ relativeCredentialPaths: true });
+    const loadFromFile = vi.spyOn(KubeConfig.prototype, "loadFromFile");
+    const originalMakePathsAbsolute = KubeConfig.prototype.makePathsAbsolute;
+    let loadedKubeconfig: KubeConfig | undefined;
+    const makePathsAbsolute = vi
+      .spyOn(KubeConfig.prototype, "makePathsAbsolute")
+      .mockImplementation(function (this: KubeConfig, rootDirectory: string) {
+        originalMakePathsAbsolute.call(this, rootDirectory);
+        loadedKubeconfig = this;
+      });
+
+    await createKubernetesDeploymentClient(config);
+
+    expect(loadFromFile).not.toHaveBeenCalled();
+    expect(makePathsAbsolute).toHaveBeenCalledOnce();
+    expect(makePathsAbsolute).toHaveBeenCalledWith(dir);
+    expect(loadedKubeconfig?.getCurrentCluster()?.caFile).toBe(
+      join(dir, "pki", "ca.crt"),
+    );
+    expect(loadedKubeconfig?.getCurrentUser()?.certFile).toBe(
+      join(dir, "pki", "client.crt"),
+    );
+    expect(loadedKubeconfig?.getCurrentUser()?.keyFile).toBe(
+      join(dir, "pki", "client.key"),
+    );
+  });
+
+  it("rejects an empty kubeconfig document", async () => {
+    const config = await writeKubeconfig();
+    await writeFile(config.kubeconfigPath, "", "utf8");
+    await expect(createKubernetesDeploymentClient(config)).rejects.toThrow(
+      "kubeconfig file is empty",
+    );
   });
 
   it("rejects a kubeconfig whose current-context does not match clusterId", async () => {

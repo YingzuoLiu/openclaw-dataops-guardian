@@ -1,6 +1,5 @@
-import { constants as fsConstants } from "node:fs";
-import { access, readFile } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { readFile } from "node:fs/promises";
+import { dirname, isAbsolute } from "node:path";
 
 import { AppsV1Api, KubeConfig } from "@kubernetes/client-node";
 
@@ -210,14 +209,14 @@ export function assertAllowlistedTarget(
 export async function createKubernetesDeploymentClient(
   config: KubernetesToolConfig,
 ): Promise<KubernetesDeploymentClient> {
-  await access(config.kubeconfigPath, fsConstants.R_OK);
-  const stats = await readFile(config.kubeconfigPath, "utf8");
-  if (stats.length === 0) {
+  const kubeconfigDocument = await readFile(config.kubeconfigPath, "utf8");
+  if (kubeconfigDocument.length === 0) {
     throw new Error("kubeconfig file is empty");
   }
 
   const kubeconfig = new KubeConfig();
-  kubeconfig.loadFromFile(config.kubeconfigPath);
+  kubeconfig.loadFromString(kubeconfigDocument);
+  kubeconfig.makePathsAbsolute(dirname(config.kubeconfigPath));
 
   if (kubeconfig.getCurrentContext() !== config.clusterId) {
     throw new Error(

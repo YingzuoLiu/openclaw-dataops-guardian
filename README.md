@@ -13,8 +13,9 @@ is a durable state machine surrounded by deterministic Tool, Reducer, approval,
 allowlist, idempotency, and finalization gates.
 
 > **Current status:** All five steps are complete, and the final one-cluster
-> WSL acceptance run passed on 2026-08-08. The accepted demo drives a real
-> Alertmanager HTTP delivery through durable Gateway state, evidence Tools,
+> WSL acceptance run passed on 2026-08-08. The accepted demo drives an
+> authenticated HTTP delivery of an Alertmanager v4-compatible webhook through
+> durable Gateway state, evidence Tools,
 > resumable approval, one allowlisted kind mutation, restart reconciliation,
 > and dual Deployment/Prometheus recovery. This is a safety-focused prototype,
 > not a production or multi-cluster remediation system.
@@ -89,9 +90,10 @@ Deployment instead of blindly issuing another mutation.
   Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
 - **Automated checks:** the TypeScript build and Vitest suite run on Node.js
   22.22.2 and Node.js 24.15.0 in CI.
-- **Real-model A/B evaluation:** in 24 paired trials, the language-only baseline
-  released 3 unsupported conclusions in 12 trials; the gated arm released 0 in
-  12. All observed baseline failures came from one deliberately adversarial
+- **Real-model A/B evaluation:** across 24 independent trials—12 baseline and 12
+  gated, forming 12 matched prompt pairs—the language-only baseline released 3
+  unsupported conclusions; the gated arm released 0. All observed baseline
+  failures came from one deliberately adversarial
   scenario, so this is a narrow reproducible result rather than a production
   failure-rate claim. See the
   [formal result](docs/openrouter-ab-formal-result.md) and

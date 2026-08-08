@@ -3,6 +3,7 @@ import type { PluginJsonValue } from "openclaw/plugin-sdk/plugin-entry";
 
 import { INCIDENT_STATE_NAMESPACE } from "../../state/incident-state.js";
 import type { IncidentState } from "../../state/incident-state.js";
+import { jsonValuesEqual } from "../../state/incident-workflow.js";
 
 export const GUARDIAN_PLUGIN_ID = "dataops-guardian";
 export const BRIDGE_AGENT_ID = "main";
@@ -29,10 +30,6 @@ export class GatewayPersistenceError extends Error {
     super(message, options);
     this.name = "GatewayPersistenceError";
   }
-}
-
-function deepEqualJson(left: unknown, right: unknown): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 type SessionsDescribeResult = {
@@ -79,16 +76,20 @@ export class GatewayIncidentClient {
       onConnectError: (error) => rejectReady(error),
     });
 
-    const connectTimeoutMs = options.connectTimeoutMs;
+    let connectTimeout: ReturnType<typeof setTimeout> | undefined;
     this.ready = Promise.race([
       this.ready,
-      new Promise<void>((_, reject) =>
-        setTimeout(
+      new Promise<void>((_, reject) => {
+        connectTimeout = setTimeout(
           () => reject(new Error("gateway connect timeout")),
-          connectTimeoutMs,
-        ),
-      ),
-    ]);
+          options.connectTimeoutMs,
+        );
+      }),
+    ]).finally(() => {
+      if (connectTimeout !== undefined) {
+        clearTimeout(connectTimeout);
+      }
+    });
   }
 
   async connect(): Promise<void> {
@@ -182,7 +183,7 @@ export class GatewayIncidentClient {
         value: state,
       },
     );
-    if (!deepEqualJson(patched.value, state)) {
+    if (!jsonValuesEqual(patched.value, state)) {
       throw new GatewayPersistenceError(
         `gateway did not durably persist the expected incident state for ${sessionKey}`,
       );
