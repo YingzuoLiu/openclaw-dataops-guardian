@@ -1,6 +1,6 @@
 # Deployment and Prometheus recovery verification (Step 4)
 
-Status: **implemented; real local proof pending**.
+Status: **implemented and proven**. See [Sanitized proof summary](#sanitized-proof-summary-2026-08-08) below.
 
 Step 4 closes the successful rollback path from `recovery_check` to
 `completed`. A successful check requires two independent live observations:
@@ -120,5 +120,30 @@ The proof creates an isolated cluster and:
 9. removes the cluster, scoped token, kubeconfig, Gateway state, and port
    forward.
 
-Until this command passes on the workstation and its sanitized summary is
-recorded, Step 4 must not be described as proven or complete.
+## Sanitized proof summary (2026-08-08)
+
+`npm run recovery:kind-prometheus-proof` passed on the workstation against a
+real kind cluster and a real Prometheus server:
+
+| Signal | Result |
+|---|---|
+| `degradedMetricObserved` | `0.7` |
+| `degradedClassification` | `critical` |
+| `rollbackDecision` | `rolled_back` |
+| `rollbackMutationDispatchCount` | `1` |
+| `rollbackReplayDecision` | `duplicate` |
+| `restartReconciliation` | `confirmed_succeeded` |
+| `deploymentHealthy` | `true` |
+| `desiredReplicas` | `1` |
+| `availableReplicas` | `1` |
+| `prometheusHealthy` | `true` |
+| `prometheusRecoveredValue` | `1` |
+| `prometheusThreshold` | `0.95` |
+| `recoveryReplayBlocked` | `true` |
+| `incidentCompleted` | `true` |
+| `completedStateSurvivedGatewayRestart` | `true` |
+| Cluster cleanup | passed |
+
+Step 4 is proven: both the Deployment and Prometheus recovery signals were
+independently observed to recover, the completed incident survived a Gateway
+restart, and a replayed recovery verification was blocked.

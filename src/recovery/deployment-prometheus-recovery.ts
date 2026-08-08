@@ -224,6 +224,10 @@ export async function verifyDeploymentAndPrometheusRecovery(input: {
   ) {
     throw new Error("recovery verification checkedAt must be a valid timestamp");
   }
+  const checkedAt = input.checkedAt ?? new Date().toISOString();
+  if (Date.parse(checkedAt) < Date.parse(input.notBefore)) {
+    throw new Error("recovery verification cannot precede remediation completion");
+  }
 
   const kubernetesConfig = resolveKubernetesToolConfig(input.rawConfig);
   const policy = requireRecoveryPolicy(
@@ -251,10 +255,6 @@ export async function verifyDeploymentAndPrometheusRecovery(input: {
     namespace: target.namespace,
     name: target.deployment,
   });
-  const checkedAt = input.checkedAt ?? new Date().toISOString();
-  if (Date.parse(checkedAt) < Date.parse(input.notBefore)) {
-    throw new Error("recovery verification cannot precede remediation completion");
-  }
   const deployment = inspectDeploymentRecovery(
     deploymentRecord,
     target,

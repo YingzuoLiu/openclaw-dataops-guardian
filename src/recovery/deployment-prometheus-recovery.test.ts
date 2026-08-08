@@ -140,40 +140,49 @@ describe("dual recovery observations", () => {
   });
 });
 
-describe("verifyDeploymentAndPrometheusRecovery", () => {
-  it("reads both systems and returns recovered only when both pass", async () => {
-    const readNamespacedDeployment = vi.fn(async () => deployment());
-    const prometheusFetch = vi.fn(async () =>
-      new Response(
-        JSON.stringify({
-          status: "success",
-          data: {
-            resultType: "vector",
-            result: [
-              {
-                metric: { service: "payments" },
-                value: [Date.parse("2026-08-07T00:00:02.000Z") / 1_000, "1"],
-              },
-            ],
-          },
-        }),
-      ),
-    );
-    const result = await verifyDeploymentAndPrometheusRecovery({
-      rawConfig: {
-        prometheusBaseUrl: "http://127.0.0.1:19090",
-        kubernetes: {
-          clusterId: target.clusterId,
-          kubeconfigPath: "/tmp/scoped-kubeconfig",
-          allowlist: [
+function baseRawConfig(overrides: Record<string, unknown> = {}) {
+  return {
+    prometheusBaseUrl: "http://127.0.0.1:19090",
+    kubernetes: {
+      clusterId: target.clusterId,
+      kubeconfigPath: "/tmp/scoped-kubeconfig",
+      allowlist: [
+        {
+          namespace: target.namespace,
+          deployment: target.deployment,
+          recovery: policy,
+        },
+      ],
+    },
+    ...overrides,
+  };
+}
+
+function passingPrometheusFetch() {
+  return vi.fn(async () =>
+    new Response(
+      JSON.stringify({
+        status: "success",
+        data: {
+          resultType: "vector",
+          result: [
             {
-              namespace: target.namespace,
-              deployment: target.deployment,
-              recovery: policy,
+              metric: { service: "payments" },
+              value: [Date.parse("2026-08-07T00:00:02.000Z") / 1_000, "1"],
             },
           ],
         },
-      },
+      }),
+    ),
+  );
+}
+
+describe("verifyDeploymentAndPrometheusRecovery", () => {
+  it("reads both systems and returns recovered only when both pass", async () => {
+    const readNamespacedDeployment = vi.fn(async () => deployment());
+    const prometheusFetch = passingPrometheusFetch();
+    const result = await verifyDeploymentAndPrometheusRecovery({
+      rawConfig: baseRawConfig(),
       idempotencyKey,
       target,
       notBefore: "2026-08-07T00:00:01.000Z",
@@ -195,5 +204,108 @@ describe("verifyDeploymentAndPrometheusRecovery", () => {
       name: target.deployment,
     });
     expect(prometheusFetch).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a target clusterId that does not match the configured cluster without touching either live system", async () => {
+    const kubernetesClientFactory = vi.fn(async () => ({
+      api: { readNamespacedDeployment: vi.fn() } as never,
+      apiServer: "https://127.0.0.1:6443/",
+    }));
+    const prometheusFetch = passingPrometheusFetch();
+
+    await expect(
+      verifyDeploymentAndPrometheusRecovery({
+        rawConfig: baseRawConfig({
+          kubernetes: {
+            clusterId: "a-different-cluster",
+            kubeconfigPath: "/tmp/scoped-kubeconfig",
+            allowlist: [
+              {
+                namespace: target.namespace,
+                deployment: target.deployment,
+                recovery: policy,
+              },
+            ],
+          },
+        }),
+        idempotencyKey,
+        target,
+        notBefore: "2026-08-07T00:00:01.000Z",
+        checkedAt: "2026-08-07T00:00:03.000Z",
+        kubernetesClientFactory,
+        prometheusFetch,
+      }),
+    ).rejects.toThrow("clusterId does not match configured cluster");
+
+    expect(kubernetesClientFactory).not.toHaveBeenCalled();
+    expect(prometheusFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects a target that cannot be decoded as a Kubernetes rollback target", async () => {
+    const kubernetesClientFactory = vi.fn(async () => ({
+      api: { readNamespacedDeployment: vi.fn() } as never,
+      apiServer: "https://127.0.0.1:6443/",
+    }));
+    const prometheusFetch = passingPrometheusFetch();
+
+    await expect(
+      verifyDeploymentAndPrometheusRecovery({
+        rawConfig: baseRawConfig(),
+        idempotencyKey,
+        target: { type: KUBERNETES_DEPLOYMENT_ROLLBACK_TARGET_TYPE } as never,
+        notBefore: "2026-08-07T00:00:01.000Z",
+        checkedAt: "2026-08-07T00:00:03.000Z",
+        kubernetesClientFactory,
+        prometheusFetch,
+      }),
+    ).rejects.toThrow("malformed rollback target");
+
+    expect(kubernetesClientFactory).not.toHaveBeenCalled();
+    expect(prometheusFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects checkedAt preceding notBefore before calling either live system", async () => {
+    const kubernetesClientFactory = vi.fn(async () => ({
+      api: { readNamespacedDeployment: vi.fn() } as never,
+      apiServer: "https://127.0.0.1:6443/",
+    }));
+    const prometheusFetch = passingPrometheusFetch();
+
+    await expect(
+      verifyDeploymentAndPrometheusRecovery({
+        rawConfig: baseRawConfig(),
+        idempotencyKey,
+        target,
+        notBefore: "2026-08-07T00:00:03.000Z",
+        checkedAt: "2026-08-07T00:00:01.000Z",
+        kubernetesClientFactory,
+        prometheusFetch,
+      }),
+    ).rejects.toThrow("cannot precede remediation completion");
+
+    expect(kubernetesClientFactory).not.toHaveBeenCalled();
+    expect(prometheusFetch).not.toHaveBeenCalled();
+  });
+
+  it("propagates a Prometheus fetch failure instead of reporting a recovery result", async () => {
+    const readNamespacedDeployment = vi.fn(async () => deployment());
+    const prometheusFetch = vi.fn(async () => {
+      throw new Error("prometheus unreachable");
+    });
+
+    await expect(
+      verifyDeploymentAndPrometheusRecovery({
+        rawConfig: baseRawConfig(),
+        idempotencyKey,
+        target,
+        notBefore: "2026-08-07T00:00:01.000Z",
+        checkedAt: "2026-08-07T00:00:03.000Z",
+        kubernetesClientFactory: async () => ({
+          api: { readNamespacedDeployment } as never,
+          apiServer: "https://127.0.0.1:6443/",
+        }),
+        prometheusFetch,
+      }),
+    ).rejects.toThrow("prometheus unreachable");
   });
 });

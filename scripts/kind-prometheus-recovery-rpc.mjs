@@ -337,13 +337,16 @@ async function verifyRecovery() {
   } while (Date.now() < deadline);
   assert(details?.decision === "recovered", `recovery did not converge: ${JSON.stringify(details)}`);
 
+  // persistDeploymentRecoveryVerification re-reads the current IncidentState
+  // from `store` itself immediately before writing, so it always binds
+  // against the latest state rather than the snapshot read above at the
+  // start of this (potentially minutes-long) polling loop.
   const completed = await persistDeploymentRecoveryVerification({
     sessionKey: record.sessionKey,
-    state,
     idempotencyKey: record.idempotencyKey,
     target: record.target,
     result: details,
-    writer: incidentStore,
+    store: incidentStore,
   });
   assert(completed.stage === "completed", `expected completed, got ${completed.stage}`);
   process.stdout.write(`${JSON.stringify({

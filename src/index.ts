@@ -71,7 +71,7 @@ export {
 
 export {
   persistDeploymentRecoveryVerification,
-  type RecoveryStateWriter,
+  type RecoveryStateStore,
 } from "./runtime/recovery-verification-entry.js";
 
 export {

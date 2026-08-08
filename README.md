@@ -12,11 +12,11 @@ become the authority to mutate infrastructure?** The answer in this repository
 is a durable state machine surrounded by deterministic Tool, Reducer, approval,
 allowlist, idempotency, and finalization gates.
 
-> **Current status:** Steps 1-3 are complete and proven. Step 4's deterministic
-> Deployment + Prometheus verifier and real proof runner are implemented; the
-> workstation proof is still pending, so Step 4 is not yet claimed complete.
-> This is a safety-focused prototype, not a production or multi-cluster
-> remediation system.
+> **Current status:** Steps 1-4 are complete and proven. Recovery is real: a
+> rolled-back Deployment and a fresh administrator-owned Prometheus threshold
+> must both pass before an incident reaches `completed`, and that outcome
+> survives a Gateway restart. This is a safety-focused prototype, not a
+> production or multi-cluster remediation system.
 
 ## System at a glance
 
@@ -29,7 +29,7 @@ flowchart TD
     D --> E["Resumable Lobster approval"]
     E --> F["Allowlisted Kubernetes rollback"]
     F --> G["Incident stage: recovery_check"]
-    G -. "Step 4 proof pending" .-> H["Deployment + Prometheus verification → completed"]
+    G --> H["Deployment + Prometheus verification → completed"]
 ```
 
 OpenClaw Gateway sessions persist the incident state. If the Gateway restarts
@@ -50,11 +50,31 @@ Deployment instead of blindly issuing another mutation.
 
 ## Results
 
-- **Real integration proof:** approved rollback changed a kind Deployment from
+- **Real integration proof (Step 3):** approved rollback changed a kind Deployment from
   revision 2 to revision 3 and restored the prior PodTemplate
   (`pause:3.10` to `pause:3.9`). Duplicate calls and post-restart replay left
   the Deployment unchanged; a new occurrence remained eligible for a later
   rollback.
+- **Real integration proof (Step 4, 2026-08-08):** `npm run recovery:kind-prometheus-proof`
+  against an isolated kind cluster and a real Prometheus server scraping a
+  live workload:
+
+  | Signal | Result |
+  |---|---|
+  | Degraded metric observed | `0.7` |
+  | Degraded classification | `critical` |
+  | Rollback decision | `rolled_back` |
+  | Rollback mutation dispatch count | `1` |
+  | Rollback replay decision | `duplicate` |
+  | Restart reconciliation | `confirmed_succeeded` |
+  | Deployment healthy | `true` (desired `1`, available `1`) |
+  | Prometheus healthy | `true` (`1` against threshold `0.95`) |
+  | Recovery replay blocked | `true` |
+  | Incident completed | `true` |
+  | Completed state survived Gateway restart | `true` |
+  | Cluster cleanup | passed |
+
+  Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
 - **Automated checks at Step 3 merge:** TypeScript build plus 235 tests across
   24 test files passed on Node.js 22.19.0 and Node.js 24.
 - **Real-model A/B evaluation:** in 24 paired trials, the language-only baseline
@@ -96,15 +116,15 @@ checkpoint, Gateway restart readback, allowlisted Deployment rollback,
 occurrence-level idempotency, valid second occurrence, and deterministic
 cleanup.
 
-The Step 4 candidate proof additionally starts a real Prometheus server and a
-one-replica metric-producing workload:
+The Step 4 proof additionally starts a real Prometheus server and a
+one-replica metric-producing workload, degrades and restores it, and verifies
+dual recovery end to end:
 
 ```bash
 npm run recovery:kind-prometheus-proof
 ```
 
-Its implementation is checked in, but its workstation result has not yet been
-recorded; do not treat the command's presence as a passed proof.
+See [Results](#results) above for the sanitized 2026-08-08 run summary.
 
 ## Reproducible proof suite
 
@@ -117,7 +137,7 @@ recorded; do not treat the command's presence as a passed proof.
 | `npm run policy:proof` | Loader-backed policy and Hook registration |
 | `npm run hooks:live-proof` | Live Gateway finalization gate with a scripted local model |
 | `npm run kubernetes:kind-rollback-proof` | Real approval, restart, rollback, idempotency, and cleanup in kind |
-| `npm run recovery:kind-prometheus-proof` | Candidate Step 4 proof: real degraded scrape, rollback, dual recovery, completion, restart readback, and cleanup |
+| `npm run recovery:kind-prometheus-proof` | Real Step 4 proof: real degraded scrape, rollback, dual recovery, completion, restart readback, and cleanup |
 | `npm run eval:openrouter:plan` | No-cost preview of the optional paid A/B schedule |
 
 Some proofs start an isolated OpenClaw Gateway and temporary local services.
@@ -133,7 +153,7 @@ requires the caller to supply `OPENROUTER_API_KEY`.
 | 2a | Alertmanager v4 canonicalization, bounded deduplication, and fail-closed reducer | Complete | [PR #6](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/6) |
 | 2b | Authenticated HTTP bridge and durable delivery checkpoints | Complete | [PR #7](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/7) |
 | 3 | Real, gated, allowlisted Kubernetes Deployment rollback in kind | Complete | [PR #8](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/8) |
-| 4 | Real post-rollback Deployment and Prometheus recovery verification | Implemented; proof pending | [Recovery contract and proof command](docs/deployment-prometheus-recovery.md) |
+| 4 | Real post-rollback Deployment and Prometheus recovery verification | Complete | [Recovery contract and proof command](docs/deployment-prometheus-recovery.md) |
 | 5 | Complete fault/safety proof and final reproducible demo | Planned | Final project completion gate |
 
 ## Security model and non-goals

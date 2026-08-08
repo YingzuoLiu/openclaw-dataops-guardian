@@ -1,14 +1,20 @@
+import type { PluginJsonValue } from "openclaw/plugin-sdk/plugin-entry";
+
 import type { DeploymentPrometheusRecoveryResult } from "../recovery/deployment-prometheus-recovery.js";
-import type {
-  IncidentState,
-  RemediationTarget,
+import {
+  readIncidentStateV3,
+  type IncidentState,
+  type RemediationTarget,
 } from "../state/incident-state.js";
 import {
   jsonValuesEqual,
   recordRecoveryCheck,
 } from "../state/incident-workflow.js";
 
-export type RecoveryStateWriter = {
+export type RecoveryStateStore = {
+  describeIncidentState(
+    sessionKey: string,
+  ): Promise<PluginJsonValue | undefined>;
   persistIncidentState(
     sessionKey: string,
     state: IncidentState,
@@ -16,22 +22,42 @@ export type RecoveryStateWriter = {
 };
 
 /**
- * Production persistence boundary for a recovery tool result. It rejects a
- * result that is not bound to the succeeded attempt or whose aggregate
- * decision disagrees with either underlying signal.
+ * Production persistence boundary for a recovery tool result. Trusted
+ * Gateway/operator code is the only expected caller: it must supply the
+ * genuine output of `verifyDeploymentAndPrometheusRecovery` (this boundary
+ * checks internal binding/consistency, but never re-queries Kubernetes or
+ * Prometheus itself).
+ *
+ * The current `IncidentState` is read from `store` immediately before both
+ * validation and the write -- never from a snapshot the caller has been
+ * holding across an external poll loop -- so a delivery replayed or
+ * evidence appended by a concurrent flow (for example restart reconciliation
+ * replaying a deferred Alertmanager delivery) while this recovery check was
+ * in flight is preserved rather than silently overwritten. `store`'s
+ * underlying write (`sessions.pluginPatch`) still has no compare-and-swap,
+ * so this only closes the long stale-snapshot window this entry point would
+ * otherwise invite; it does not provide full concurrency safety.
  */
 export async function persistDeploymentRecoveryVerification(input: {
   sessionKey: string;
-  state: IncidentState;
   idempotencyKey: string;
   target: RemediationTarget;
   result: DeploymentPrometheusRecoveryResult;
-  writer: RecoveryStateWriter;
+  store: RecoveryStateStore;
 }): Promise<IncidentState> {
-  if (input.state.stage !== "recovery_check") {
+  const raw = await input.store.describeIncidentState(input.sessionKey);
+  const decoded = readIncidentStateV3(raw);
+  if (!decoded.ok) {
+    throw new Error(
+      `recovery verification cannot read incident state: ${decoded.error}`,
+    );
+  }
+  const state = decoded.state;
+
+  if (state.stage !== "recovery_check") {
     throw new Error("recovery verification requires stage=recovery_check");
   }
-  const attempt = input.state.remediationAttempts.find(
+  const attempt = state.remediationAttempts.find(
     (candidate) => candidate.idempotencyKey === input.idempotencyKey,
   );
   if (
@@ -62,12 +88,12 @@ export async function persistDeploymentRecoveryVerification(input: {
     throw new Error("recovery verification aggregate decision is inconsistent");
   }
 
-  const state = recordRecoveryCheck(input.state, {
+  const nextState = recordRecoveryCheck(state, {
     healthy: recovered,
     summary: input.result.summary,
     checkedAt: input.result.checkedAt,
     source: "guardian_deployment_prometheus_recovery",
   });
-  await input.writer.persistIncidentState(input.sessionKey, state);
-  return state;
+  await input.store.persistIncidentState(input.sessionKey, nextState);
+  return nextState;
 }
