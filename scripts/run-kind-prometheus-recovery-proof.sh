@@ -152,9 +152,14 @@ kind create cluster \
   --kubeconfig "$ADMIN_KUBECONFIG" \
   --wait 120s
 CLUSTER_CREATED=true
-docker pull "$NGINX_IMAGE" >/dev/null
-docker pull "$PROMETHEUS_IMAGE" >/dev/null
-kind load docker-image "$NGINX_IMAGE" "$PROMETHEUS_IMAGE" --name "$CLUSTER_NAME" >/dev/null
+# Pull directly into the kind node's containerd image store. Docker Desktop's
+# containerd-backed host image store can retain a multi-platform manifest while
+# only materializing the current platform. `kind load docker-image` then imports
+# that incomplete index with `--all-platforms` and fails on a missing digest.
+# Pulling through the node's CRI resolves only the node platform and keeps the
+# proof independent of the host Docker image-store implementation.
+docker exec "${CLUSTER_NAME}-control-plane" crictl pull "$NGINX_IMAGE" >/dev/null
+docker exec "${CLUSTER_NAME}-control-plane" crictl pull "$PROMETHEUS_IMAGE" >/dev/null
 kubectl --kubeconfig "$ADMIN_KUBECONFIG" create namespace "$NAMESPACE"
 
 # --- 2. Real workload: revision 1 exports a healthy metric. ---
