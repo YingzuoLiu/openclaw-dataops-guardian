@@ -58,6 +58,41 @@ describe("final demo source contract", () => {
     expect(fast).not.toContain("eval:openrouter");
     expect(fast).toContain("Array.from({ length: 8 }");
     expect(fast).toContain('`${ports.join(" ")}\\n`');
+    expect(fast).toContain(
+      'STAGED_GUARDIAN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"',
+    );
+    expect(fast).toContain('cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/."');
+    expect(fast).toContain(
+      'ln -s "$ROOT_DIR/node_modules" "$STAGED_GUARDIAN_DIR/node_modules"',
+    );
+    expect(fast).toContain(
+      'chmod -R go-w "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"',
+    );
+    expect(fast).toContain('tail -n 120 "$CURRENT_LOG"');
+    expect(fast).toContain(
+      'GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR"',
+    );
+    expect(fast).toContain(
+      'GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR"',
+    );
+
+    const [policy, live, bridge, vertical] = await Promise.all([
+      source("scripts/run-policy-registration-proof.sh"),
+      source("scripts/run-live-hook-invocation-proof.sh"),
+      source("scripts/run-alertmanager-http-bridge-proof.sh"),
+      source("scripts/run-vertical-slice-proof.sh"),
+    ]);
+    for (const component of [policy, live, bridge, vertical]) {
+      expect(component).toContain("GUARDIAN_PROOF_PLUGIN_DIR");
+      expect(component).toContain("plugins.load.paths");
+      expect(component).toContain("plugins.entries.dataops-guardian.enabled");
+    }
+    expect(vertical).toContain(
+      'LOBSTER_PLUGIN_DIR="${GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR:-$PWD/node_modules/@openclaw/lobster}"',
+    );
+    expect(vertical).toContain(
+      "plugins.entries.lobster.enabled true",
+    );
 
     expectInOrder(full, [
       "run-final-fast-demo.sh",

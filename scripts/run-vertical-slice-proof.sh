@@ -8,6 +8,7 @@ export OPENCLAW_VERTICAL_SESSION_KEY="${OPENCLAW_VERTICAL_SESSION_KEY:-agent:mai
 export OPENCLAW_VERTICAL_RESUME_FILE="${OPENCLAW_VERTICAL_RESUME_FILE:-$OPENCLAW_STATE_DIR/vertical-slice-script-resume.json}"
 export LOBSTER_STATE_DIR="${LOBSTER_STATE_DIR:-$OPENCLAW_STATE_DIR/lobster-state}"
 export GUARDIAN_MOCK_PROMETHEUS_PORT="${GUARDIAN_MOCK_PROMETHEUS_PORT:-19090}"
+LOBSTER_PLUGIN_DIR="${GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR:-$PWD/node_modules/@openclaw/lobster}"
 
 DECISION="${GUARDIAN_PROOF_DECISION:-approve}"
 if [[ "$DECISION" != "approve" && "$DECISION" != "deny" ]]; then
@@ -38,8 +39,21 @@ cleanup() {
 trap cleanup EXIT
 
 npm run build
-./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
-./node_modules/.bin/openclaw plugins install --link "$PWD/node_modules/@openclaw/lobster" >/dev/null
+if [[ -n "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
+  PLUGIN_LOAD_PATHS="$(
+    node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
+      "$GUARDIAN_PROOF_PLUGIN_DIR" "$LOBSTER_PLUGIN_DIR"
+  )"
+  ./node_modules/.bin/openclaw config set \
+    plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
+  ./node_modules/.bin/openclaw config set \
+    plugins.entries.dataops-guardian.enabled true >/dev/null
+  ./node_modules/.bin/openclaw config set \
+    plugins.entries.lobster.enabled true >/dev/null
+else
+  ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+  ./node_modules/.bin/openclaw plugins install --link "$LOBSTER_PLUGIN_DIR" >/dev/null
+fi
 ./node_modules/.bin/openclaw config set gateway.mode local >/dev/null
 ./node_modules/.bin/openclaw config set gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
 ./node_modules/.bin/openclaw config set tools.alsoAllow '["lobster"]' >/dev/null

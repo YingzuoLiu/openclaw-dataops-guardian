@@ -134,9 +134,11 @@ requires a Linux/WSL Bash shell, a reachable Docker daemon, `kind`, and
 npm run demo
 ```
 
-Both commands release only an allowlisted, sanitized JSON summary. The full
-command deletes its isolated cluster and temporary credentials before it emits
-that report. See the [final proof contract](docs/final-safety-proof.md).
+On success, both commands release only an allowlisted, sanitized JSON summary.
+On failure, they emit a bounded tail of the active local proof log before
+temporary cleanup so that the cause is not discarded. The full command deletes
+its isolated cluster and temporary credentials before it emits a success
+report. See the [final proof contract](docs/final-safety-proof.md).
 
 ## Reproducible proof suite
 

@@ -37,7 +37,18 @@ mkdir -p "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR"
 : >"$GATEWAY_LOG"
 
 npm run build
-./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+if [[ -n "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
+  PLUGIN_LOAD_PATHS="$(
+    node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
+      "$GUARDIAN_PROOF_PLUGIN_DIR"
+  )"
+  ./node_modules/.bin/openclaw config set \
+    plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
+  ./node_modules/.bin/openclaw config set \
+    plugins.entries.dataops-guardian.enabled true >/dev/null
+else
+  ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+fi
 ./node_modules/.bin/openclaw config set gateway.mode local >/dev/null
 ./node_modules/.bin/openclaw config set gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
 ./node_modules/.bin/openclaw config set \

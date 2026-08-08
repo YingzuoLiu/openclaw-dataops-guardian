@@ -107,7 +107,19 @@ mkdir -p "$OPENCLAW_STATE_DIR" "$BRIDGE_STATE_DIR"
 cd "$ROOT_DIR"
 npm run build
 
-"$ROOT_DIR/node_modules/.bin/openclaw" plugins install --link "$ROOT_DIR" >/dev/null
+if [[ -n "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
+  PLUGIN_LOAD_PATHS="$(
+    node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
+      "$GUARDIAN_PROOF_PLUGIN_DIR"
+  )"
+  "$ROOT_DIR/node_modules/.bin/openclaw" config set \
+    plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
+  "$ROOT_DIR/node_modules/.bin/openclaw" config set \
+    plugins.entries.dataops-guardian.enabled true >/dev/null
+else
+  "$ROOT_DIR/node_modules/.bin/openclaw" plugins install \
+    --link "$ROOT_DIR" >/dev/null
+fi
 "$ROOT_DIR/node_modules/.bin/openclaw" config set gateway.mode local >/dev/null
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
   gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null

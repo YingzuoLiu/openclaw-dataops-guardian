@@ -149,7 +149,8 @@ To run the full release proof on Linux/WSL with a reachable Docker daemon,
 npm run demo
 ```
 
-It emits only an allowlisted JSON summary after cleanup. See the
+On success, it emits only an allowlisted JSON summary after cleanup. On failure,
+it emits a bounded tail of the active local proof log before cleanup. See the
 [final safety proof](final-safety-proof.md) for the complete positive and
 negative matrix.
 

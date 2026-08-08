@@ -105,9 +105,11 @@ justify another live cluster fault.
 
 ## Report contract
 
-Both demos keep component stdout and raw logs inside proof-owned temporary
-directories. `scripts/final-proof-report.mjs` constructs the released JSON from
-an explicit field allowlist and validates the result recursively.
+On success, both demos keep component stdout and raw logs inside proof-owned
+temporary directories. If a component fails, the runner copies only its last
+120 local log lines to stderr before deleting the directory, and emits no
+success report. `scripts/final-proof-report.mjs` constructs the released JSON
+from an explicit field allowlist and validates the result recursively.
 
 The full report contains only:
 
