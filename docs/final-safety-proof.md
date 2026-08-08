@@ -1,10 +1,10 @@
 # Final safety proof and reproducible demo (Step 5)
 
-Status: **release candidate; full WSL acceptance pending**. This is the
-`v0.2.0` release acceptance contract. Do not mark Step 5 complete or publish
-the release until `npm run demo` passes from a clean Linux/WSL checkout. It
-composes the component proofs from Steps 1-4 and adds bounded live failure and
-authority cases without expanding Guardian into a production orchestrator.
+Status: **accepted on Linux/WSL on 2026-08-08**. This is the `v0.2.0`
+release acceptance contract. `npm run demo` passed end to end with an
+allowlisted `ok: true` report after cleanup. It composes the component proofs
+from Steps 1-4 and adds bounded live failure and authority cases without
+expanding Guardian into a production orchestrator.
 
 ## Commands
 
