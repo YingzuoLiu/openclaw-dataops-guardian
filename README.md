@@ -71,6 +71,9 @@ npm ci
 npm run check
 ```
 
+The standard check runs entirely locally and does not contact a Kubernetes
+cluster or Prometheus server.
+
 Choose the proof that matches what you want to inspect:
 
 | Goal | Command | Additional requirements |
@@ -250,6 +253,7 @@ against newer stable releases.
 
 ## License and project feedback
 
-Licensed under the [MIT License](LICENSE). For bugs or design discussion, open
-a [GitHub issue](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues).
+Licensed under the [MIT License](LICENSE). For code contributions, see
+[CONTRIBUTING.md](CONTRIBUTING.md). For bugs or design discussion, open a
+[GitHub issue](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues).
 For security reports, follow [SECURITY.md](SECURITY.md).
