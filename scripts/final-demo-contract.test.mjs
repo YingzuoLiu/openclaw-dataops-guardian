@@ -153,6 +153,30 @@ describe("final demo source contract", () => {
     expect(full).toContain("GUARDIAN_FINAL_PROGRESS_FD=3");
   });
 
+  it("re-executes Windows-mounted WSL proofs from private native storage", async () => {
+    const [helper, fast, full] = await Promise.all([
+      source("scripts/guardian-proof-native-stage.sh"),
+      source("scripts/run-final-fast-demo.sh"),
+      source("scripts/run-final-demo.sh"),
+    ]);
+
+    for (const runner of [fast, full]) {
+      expectInOrder(runner, [
+        'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
+        'source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"',
+        "guardian_reexec_proof_on_native_fs",
+        'RUNTIME_DIR="$(mktemp -d',
+      ]);
+    }
+    expect(helper).toContain("/mnt/[A-Za-z]/*");
+    expect(helper).toContain("--cached --others --exclude-standard -z");
+    expect(helper).toContain('printf "node_modules\\0"');
+    expect(helper).toContain("--no-same-owner --no-same-permissions");
+    expect(helper).toContain('TMPDIR="$staged_tmp"');
+    expect(helper).toContain("GUARDIAN_PROOF_NATIVE_STAGED=1");
+    expect(helper).toContain("find \"$stage_root\" -depth -delete");
+  });
+
   it("uses one run-owned kind cluster and performs the complete live safety sequence", async () => {
     const runner = await source("scripts/run-kind-prometheus-recovery-proof.sh");
 

@@ -6,6 +6,10 @@ set -euo pipefail
 # failures emit a bounded local diagnostic tail before temporary cleanup.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"
+guardian_reexec_proof_on_native_fs \
+  "$ROOT_DIR" "scripts/run-final-fast-demo.sh" "demo:fast"
+
 RUNTIME_DIR="$(mktemp -d /tmp/guardian-final-fast.XXXXXX)"
 STAGED_GUARDIAN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"
 STAGED_LOBSTER_DIR="$RUNTIME_DIR/plugins/lobster"

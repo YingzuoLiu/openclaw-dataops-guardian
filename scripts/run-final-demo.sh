@@ -2,6 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"
+guardian_reexec_proof_on_native_fs \
+  "$ROOT_DIR" "scripts/run-final-demo.sh" "demo"
+
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/guardian-final-demo.XXXXXX")"
 CURRENT_COMPONENT="prerequisite checks"
 PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"

@@ -26,7 +26,11 @@ and a scripted local model. It does not use Docker, Kubernetes, an external
 model, or a paid API. It disables discovery of unrelated OpenClaw bundled
 extensions and explicitly loads only the proof-owned Guardian and Lobster
 copies. This keeps the proof valid when WSL DrvFS presents a checkout's
-`node_modules` as world-writable. It aggregates:
+`node_modules` as world-writable. When started under a Windows-mounted WSL path,
+the runner mirrors the current non-ignored worktree and installed dependencies
+once into a private native-Linux directory under `/tmp`, re-executes there, and
+deletes the mirror on exit. This preserves the exact runtime inspection while
+removing DrvFS small-file latency from plugin and Gateway startup. It aggregates:
 
 The runner also clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`,
 and `OPENCLAW_HOME` overrides before assigning its proof-owned state. A caller's

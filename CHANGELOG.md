@@ -20,8 +20,11 @@ semantic versioning for its source tags; it is not published to npm or ClawHub.
 - WSL-safe temporary plugin staging for Windows-mounted checkouts, explicit
   exclusion of unrelated bundled extensions, phase-only progress, bounded
   component deadlines, stamped single-build artifact reuse, batched proof
-  configuration, caller-profile isolation, and active-component diagnostics on
-  failed proof runs.
+  configuration, automatic native-filesystem proof re-execution, caller-profile
+  isolation, and active-component diagnostics on failed proof runs.
+- Deferred Kubernetes SDK loading so plugin inspection and Gateway registration
+  do not import the generated Kubernetes API graph before a real cluster
+  operation requests a client.
 
 ### Security
 

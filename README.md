@@ -141,9 +141,13 @@ its isolated cluster and temporary credentials before it emits a success
 report. Both runners print only phase names while they work and impose bounded
 component deadlines when the standard Linux `timeout` command is available. The
 proofs also disable discovery of unrelated OpenClaw bundled extensions; Guardian
-and Lobster remain explicitly loaded from proof-owned paths. This avoids false
-world-writable warnings when a checkout and its `node_modules` live on WSL DrvFS
-under `/mnt/c`. See the
+and Lobster remain explicitly loaded from proof-owned paths. When invoked from a
+Windows-mounted WSL checkout such as `/mnt/c`, each runner first mirrors the
+current non-ignored worktree and its installed `node_modules` into a private
+native-Linux directory under `/tmp`, runs the same command there, and deletes
+the mirror on exit. This avoids DrvFS world-writable modes and small-file ESM
+cold-start timeouts without changing the checkout or reinstalling dependencies.
+See the
 [final proof contract](docs/final-safety-proof.md).
 
 ## Reproducible proof suite

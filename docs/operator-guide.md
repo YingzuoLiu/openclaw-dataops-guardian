@@ -142,15 +142,21 @@ cluster, paid API, or external model. Proof clients temporarily disable device
 authentication only inside their disposable local profiles and restore it on
 exit. The runner explicitly loads Guardian and Lobster while disabling discovery
 of unrelated bundled extensions, so a WSL checkout under `/mnt/c` does not fail
-on DrvFS world-writable modes. It also clears inherited `OPENCLAW_CONFIG_PATH`,
-`OPENCLAW_PROFILE`, and `OPENCLAW_HOME` overrides before assigning its
-proof-owned state directory, so an exported caller profile cannot redirect the
-run into normal OpenClaw state. Never point a proof script at a normal Gateway
-profile. The aggregate runner builds once before staging and reuses that
-artifact for its five components only after validating a run-owned stamp and
-the staged files; direct component proof commands continue to build for
-themselves. Each component applies its proof configuration in one validated
-batch to avoid repeated CLI cold starts and filesystem scans on DrvFS.
+on DrvFS world-writable modes. Both aggregate runners also detect a
+Windows-mounted WSL worktree, copy its current non-ignored files and installed
+`node_modules` into a private native-Linux directory under `/tmp`, re-execute
+there, and delete that mirror on exit. No dependency reinstall or network access
+is added, and the source checkout is not changed. This amortizes DrvFS small-file
+cost before OpenClaw loads the plugin and starts its Gateways.
+
+The runner clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`, and
+`OPENCLAW_HOME` overrides before assigning its proof-owned state directory, so
+an exported caller profile cannot redirect the run into normal OpenClaw state.
+Never point a proof script at a normal Gateway profile. The aggregate runner
+builds once before staging and reuses that artifact for its five components only
+after validating a run-owned stamp and the staged files; direct component proof
+commands continue to build for themselves. Each component applies its proof
+configuration in one validated batch.
 
 To run the full release proof on Linux/WSL with a reachable Docker daemon,
 `kind`, and `kubectl`:

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 
-import { AppsV1Api, KubeConfig } from "@kubernetes/client-node";
+import type { AppsV1Api } from "@kubernetes/client-node";
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/;
 
@@ -214,6 +214,10 @@ export async function createKubernetesDeploymentClient(
     throw new Error("kubeconfig file is empty");
   }
 
+  // The package's public entrypoint eagerly imports every generated Kubernetes
+  // API and model. Keep that cost off the plugin-registration and Gateway
+  // startup paths; only a real Kubernetes operation needs the client runtime.
+  const { AppsV1Api, KubeConfig } = await import("@kubernetes/client-node");
   const kubeconfig = new KubeConfig();
   kubeconfig.loadFromString(kubeconfigDocument);
   kubeconfig.makePathsAbsolute(dirname(config.kubeconfigPath));
