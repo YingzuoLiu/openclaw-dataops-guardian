@@ -168,14 +168,34 @@ export function inspectPrometheusRecovery(
   const notBeforeMs = Date.parse(params.notBefore);
   const checkedAtMs = Date.parse(params.checkedAt);
   const maxAgeMs = policy.maxSampleAgeSeconds * 1_000;
+  const observedAtValid = Number.isFinite(observedAtMs);
+  const notBeforeValid = Number.isFinite(notBeforeMs);
+  const checkedAtValid = Number.isFinite(checkedAtMs);
 
-  if (observedAtMs < notBeforeMs) {
+  if (!observedAtValid) {
+    issues.push("prometheus_sample_timestamp_invalid");
+  }
+  if (!notBeforeValid) {
+    issues.push("prometheus_recovery_not_before_invalid");
+  }
+  if (!checkedAtValid) {
+    issues.push("prometheus_recovery_checked_at_invalid");
+  }
+  if (observedAtValid && notBeforeValid && observedAtMs < notBeforeMs) {
     issues.push("prometheus_sample_precedes_remediation");
   }
-  if (checkedAtMs - observedAtMs > maxAgeMs) {
+  if (
+    observedAtValid &&
+    checkedAtValid &&
+    checkedAtMs - observedAtMs > maxAgeMs
+  ) {
     issues.push("prometheus_sample_stale");
   }
-  if (observedAtMs - checkedAtMs > 30_000) {
+  if (
+    observedAtValid &&
+    checkedAtValid &&
+    observedAtMs - checkedAtMs > 30_000
+  ) {
     issues.push("prometheus_sample_from_future");
   }
   const thresholdPassed =

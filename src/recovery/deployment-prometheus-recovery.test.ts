@@ -138,6 +138,49 @@ describe("dual recovery observations", () => {
       ).issues,
     ).toContain("prometheus_sample_precedes_remediation");
   });
+
+  it.each([
+    [
+      "the sample timestamp",
+      "not-a-timestamp",
+      "2026-08-07T00:00:01.000Z",
+      "2026-08-07T00:00:03.000Z",
+      "prometheus_sample_timestamp_invalid",
+    ],
+    [
+      "the recovery lower bound",
+      "2026-08-07T00:00:02.000Z",
+      "not-a-timestamp",
+      "2026-08-07T00:00:03.000Z",
+      "prometheus_recovery_not_before_invalid",
+    ],
+    [
+      "the recovery check time",
+      "2026-08-07T00:00:02.000Z",
+      "2026-08-07T00:00:01.000Z",
+      "not-a-timestamp",
+      "prometheus_recovery_checked_at_invalid",
+    ],
+  ])(
+    "fails closed when %s is invalid",
+    (_, observedAt, notBefore, checkedAt, expectedIssue) => {
+      const observation = inspectPrometheusRecovery(
+        {
+          query: policy.prometheusQuery,
+          currentValue: 1,
+          observedAt,
+          labels: {},
+        },
+        policy,
+        { notBefore, checkedAt },
+      );
+
+      expect(observation).toMatchObject({
+        healthy: false,
+        issues: [expectedIssue],
+      });
+    },
+  );
 });
 
 function baseRawConfig(overrides: Record<string, unknown> = {}) {

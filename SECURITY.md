@@ -21,6 +21,14 @@ internal hostnames, and production metric values.
 ## Security boundaries in `v0.2.0`
 
 - Prometheus access is read-only and the endpoint is administrator-owned.
+- `guardian_query_prometheus` accepts Agent-supplied PromQL up to 2,048
+  characters. Its configured client timeout (five seconds by default, up to 30
+  seconds) bounds how long Guardian waits, not query cost at the server;
+  Guardian enforces neither a PromQL allowlist nor a query-cost budget.
+  Expensive expressions can therefore load the administrator-owned endpoint.
+  Restrict Tool access and apply Prometheus-side limits where appropriate.
+  Recovery verification is narrower and uses only administrator-configured
+  PromQL.
 - Credentials embedded in `prometheusBaseUrl` are rejected.
 - Bearer-token, mTLS, and cloud-provider authentication are not implemented.
 - Kubernetes mutation is limited to a configured cluster context and exact
