@@ -2,25 +2,41 @@
 
 [![CI](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/workflows/ci.yml)
 
-**Evidence-gated incident remediation for OpenClaw:** authenticated Alertmanager
-ingestion, read-only Prometheus investigation, restart-safe human approval, and
-an administrator-allowlisted Kubernetes Deployment rollback.
+**OpenClaw DataOps Guardian is a safety-focused plugin prototype that turns an
+Alertmanager incident into a gated, restart-safe Kubernetes Deployment
+rollback.** It persists the incident, collects fresh Prometheus evidence, waits
+for human approval, applies at most one exact allowlisted mutation, and marks
+the incident complete only after both Deployment readiness and a fresh
+Prometheus signal recover.
 
-Guardian explores a specific reliability question: **how can an LLM-assisted
-operations workflow investigate and propose a change without letting model text
-become the authority to mutate infrastructure?** The answer in this repository
-is a durable state machine surrounded by deterministic Tool, Reducer, approval,
-allowlist, idempotency, and finalization gates.
+## Why it exists
 
-> **Current status:** All five steps are complete. Release acceptance is the
-> exact-head `Full safety proof` CI job, which drives an
-> authenticated HTTP delivery of an Alertmanager v4-compatible webhook through
-> durable Gateway state, evidence Tools,
-> resumable approval, one allowlisted kind mutation, restart reconciliation,
-> and dual Deployment/Prometheus recovery. This is a safety-focused prototype,
-> not a production or multi-cluster remediation system.
+A conventional rollback script answers “how do I change the Deployment?”
+Guardian focuses on the control failures around that change:
 
-## System at a glance
+- Can a duplicate alert, retry, or restarted process issue the mutation twice?
+- Can an Agent choose an arbitrary cluster, target, command, or patch?
+- Does an Alertmanager `resolved` event get mistaken for actual recovery?
+- Can an operator inspect why a rollback was allowed, denied, or blocked?
+- Does the released proof correspond to the exact source commit being viewed?
+
+The LLM may investigate and propose, but it is never the authority to mutate
+infrastructure. Administrator configuration and deterministic Tool, Reducer,
+approval, allowlist, idempotency, reconciliation, and recovery gates own that
+decision.
+
+Use this repository to study the implementation, run the workflow without a
+cluster, or reproduce the full safety matrix in a disposable kind environment.
+It is a safety-focused reference prototype, not a production or
+multi-cluster remediation service.
+
+> **Status:** The five-step implementation is complete. Release acceptance is
+> the exact-head `Full safety proof` CI job, which exercises authenticated
+> Alertmanager delivery, durable Gateway state, evidence Tools, resumable human
+> approval, one allowlisted kind mutation, restart reconciliation, dual
+> Deployment/Prometheus recovery, and cleanup.
+
+## How it works
 
 ```mermaid
 flowchart TD
@@ -36,9 +52,61 @@ flowchart TD
 
 OpenClaw Gateway sessions persist the incident state. If the Gateway restarts
 or a delivery is replayed, Guardian reconciles the stored attempt with the live
-Deployment instead of blindly issuing another mutation.
+Deployment instead of blindly issuing another mutation. A completed incident
+therefore means that the approved rollback was audited and both infrastructure
+readiness and a fresh application metric passed—not merely that an alert
+changed state.
 
-## What is verified
+## Try it
+
+Prerequisites:
+
+- Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
+- npm
+
+```bash
+git clone https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
+cd openclaw-dataops-guardian
+npm ci
+npm run check
+```
+
+The standard check runs entirely locally and does not contact a Kubernetes
+cluster or Prometheus server.
+
+Choose the proof that matches what you want to inspect:
+
+| Goal | Command | Additional requirements |
+|---|---|---|
+| Build and run the deterministic test suite | `npm run check` | None |
+| Exercise policy, live Agent hooks, HTTP ingestion, crash recovery, and approve/deny paths | `npm run demo:fast` | Linux/WSL Bash; no Docker, cluster, paid API, or external model |
+| Reproduce the complete rollback and recovery safety matrix | `npm run demo` | Linux/WSL Bash, Docker, `kind`, `kubectl`, and image-pull network access |
+
+The full demo creates exactly one disposable kind cluster from digest-pinned
+images, uses a scoped ServiceAccount, and cleans up the cluster and temporary
+credentials before releasing a sanitized `ok: true` report. Both aggregate
+demos require a clean committed worktree and bind their reports to its full Git
+SHA.
+
+<details>
+<summary>Running from a Windows-mounted WSL path</summary>
+
+When invoked from a checkout such as `/mnt/c`, the demo exports the exact clean
+commit into a private native-Linux capsule under `/tmp`, restores the
+lockfile-pinned dependencies there, and deletes the capsule on exit. It does not
+copy the caller's `node_modules` tree or accept uncommitted source as release
+evidence. Dependency restoration prefers npm's cache and may contact the npm
+registry. A native WSL checkout such as `~/Projects` is faster for repeated
+runs.
+
+</details>
+
+Guardian is not published to npm or ClawHub. To inspect or link the plugin into
+a dedicated OpenClaw profile, follow the [operator guide](docs/operator-guide.md).
+For the full positive/negative matrix and report contract, see the
+[final safety proof](docs/final-safety-proof.md).
+
+## Safety boundaries and guarantees
 
 | Boundary | Implemented guarantee | Reproducible evidence |
 |---|---|---|
@@ -51,7 +119,7 @@ Deployment instead of blindly issuing another mutation.
 | Recovery | Succeeded-attempt binding, audited Deployment readiness, and fresh administrator-owned Prometheus policy must all pass before `completed` | [Step 4 recovery contract](docs/deployment-prometheus-recovery.md) |
 | Final safety proof | Denial, ambiguous restart, off-target/RBAC rejection, resolved-is-not-recovery, scale-to-zero failure, replay protection, sanitization, and cleanup | [Step 5 proof matrix](docs/final-safety-proof.md) |
 
-## Results
+## Verified results
 
 - **Final safety proof (Step 5):** `npm run demo` combines the no-cost fast
   suite with one isolated kind cluster. Its allowlisted JSON report is emitted
@@ -101,63 +169,7 @@ Deployment instead of blindly issuing another mutation.
   [formal result](docs/openrouter-ab-formal-result.md) and
   [machine-readable evidence](evals/openrouter-ab/formal-2026-07-19.json).
 
-## Quickstart
-
-Prerequisites:
-
-- Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
-- npm
-
-```bash
-git clone https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
-cd openclaw-dataops-guardian
-npm ci
-npm run check
-```
-
-The standard check is local and does not contact a production monitoring or
-Kubernetes environment.
-
-### Run the final demos
-
-The fast demo uses isolated loopback fixtures and a scripted local model. It
-does not use Docker, Kubernetes, a paid API, or an external model:
-
-```bash
-npm run demo:fast
-```
-
-The full release proof runs the fast suite, then creates exactly one disposable
-kind cluster from digest-pinned source images and a scoped ServiceAccount. It
-requires a Linux/WSL Bash shell, a reachable Docker daemon, `kind`, and
-`kubectl`:
-
-```bash
-npm run demo
-```
-
-On success, both commands release only an allowlisted, sanitized JSON summary.
-Both aggregate demos require a clean committed worktree and include its full Git
-SHA in the report; uncommitted code cannot become release evidence.
-On failure, they emit a bounded tail of the active local proof log before
-temporary cleanup so that the cause is not discarded. The full command deletes
-its isolated cluster and temporary credentials before it emits a success
-report. Both runners print only phase names while they work and impose bounded
-component deadlines when the standard Linux `timeout` command is available. The
-proofs also disable discovery of unrelated OpenClaw bundled extensions; Guardian
-and Lobster remain explicitly loaded from proof-owned paths. When invoked from a
-Windows-mounted WSL checkout such as `/mnt/c`, each runner requires a clean
-worktree, exports the exact commit into a private native-Linux directory under
-`/tmp`, restores the lockfile-pinned dependencies there, runs the same command,
-and deletes the capsule on exit. It never copies the caller's `node_modules`
-tree or accepts an uncommitted source tree as release evidence. Dependency
-restoration prefers npm's cache and may contact the npm registry. For repeated
-local runs, a checkout under the WSL native filesystem (for example
-`~/Projects`) is faster.
-See the
-[final proof contract](docs/final-safety-proof.md).
-
-## Reproducible proof suite
+## Proof command reference
 
 | Command | What it demonstrates |
 |---|---|
@@ -178,7 +190,7 @@ Follow the linked contracts and never point proof scripts at a normal OpenClaw
 profile or production cluster. Re-running paid model trials is opt-in and
 requires the caller to supply `OPENROUTER_API_KEY`.
 
-## Five-step project status
+## Implementation status
 
 | Step | Scope | Status | Evidence |
 |---|---|---|---|
@@ -241,6 +253,7 @@ against newer stable releases.
 
 ## License and project feedback
 
-Licensed under the [MIT License](LICENSE). For bugs or design discussion, open
-a [GitHub issue](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues).
+Licensed under the [MIT License](LICENSE). For code contributions, see
+[CONTRIBUTING.md](CONTRIBUTING.md). For bugs or design discussion, open a
+[GitHub issue](https://github.com/YingzuoLiu/openclaw-dataops-guardian/issues).
 For security reports, follow [SECURITY.md](SECURITY.md).
