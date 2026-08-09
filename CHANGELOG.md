@@ -3,7 +3,7 @@
 All notable changes to DataOps Guardian are recorded here. The project follows
 semantic versioning for its source tags; it is not published to npm or ClawHub.
 
-## [0.2.0] - 2026-08-08
+## [0.2.0] - 2026-08-09
 
 ### Added
 
@@ -17,11 +17,14 @@ semantic versioning for its source tags; it is not published to npm or ClawHub.
   `completed`.
 - No-cost `demo:fast` and a one-cluster `demo` with positive and negative safety
   cases, an allowlisted JSON report, and explicit cleanup verification.
-- WSL-safe temporary plugin staging for Windows-mounted checkouts, explicit
+- Commit-bound WSL proof capsules for Windows-mounted checkouts, explicit
   exclusion of unrelated bundled extensions, phase-only progress, bounded
-  component deadlines, stamped single-build artifact reuse, batched proof
+  component deadlines, lockfile-based native dependency restoration, stamped
+  single-build artifact reuse, batched proof
   configuration, automatic native-filesystem proof re-execution, caller-profile
   isolation, and active-component diagnostics on failed proof runs.
+- Exact-head CI acceptance that runs the complete one-cluster demo and retains
+  its sanitized, source-bound report.
 - Deferred Kubernetes SDK loading so plugin inspection and Gateway registration
   do not import the generated Kubernetes API graph before a real cluster
   operation requests a client.

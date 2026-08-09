@@ -28,6 +28,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
 
       - name: Use Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
@@ -40,3 +43,279 @@ jobs:
 
       - name: Build and test
         run: npm run check
+
+  integration:
+    name: Full safety proof (Node 22.22.2 / kind v0.29.0)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      KIND_VERSION: v0.29.0
+      KIND_SHA256: c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284
+      KUBECTL_VERSION: v1.33.1
+      KUBECTL_SHA256: 5de4e9f2266738fd112b721265a0c1cd7f4e5208b670f811861f699474a100a3
+      GUARDIAN_KIND_NODE_IMAGE: kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f
+      GUARDIAN_NGINX_IMAGE: nginx:1.27.5-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+      GUARDIAN_PROMETHEUS_IMAGE: prom/prometheus:v2.53.5@sha256:7a34573f0b9c952286b33d537f233cd5b708e12263733aa646e50c33f598f16c
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Use Node.js 22.22.2
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.22.2
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bind proof to checked-out commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_commit="$(git rev-parse HEAD)"
+          test -z "$(git status --porcelain)"
+          echo "GUARDIAN_PROOF_SOURCE_COMMIT=$source_commit" >>"$GITHUB_ENV"
+
+      - name: Install pinned kind and kubectl
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir="$RUNNER_TEMP/guardian-bin"
+          mkdir -p "$tool_dir"
+
+          curl --fail --location --retry 5 --retry-all-errors \
+            -o "$tool_dir/kind" \
+            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "$KIND_SHA256" "$tool_dir/kind" \
+            | sha256sum --check --strict
+
+          curl --fail --location --retry 5 --retry-all-errors \
+            -o "$tool_dir/kubectl" \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$tool_dir/kubectl" \
+            | sha256sum --check --strict
+
+          chmod 0755 "$tool_dir/kind" "$tool_dir/kubectl"
+          echo "$tool_dir" >>"$GITHUB_PATH"
+
+      - name: Verify integration prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = x86_64
+          command -v bash git tar timeout docker kind kubectl node npm
+          docker info >/dev/null
+          kind version
+          kubectl version --client --output=yaml
+
+          report_dir="$RUNNER_TEMP/guardian-final-proof"
+          mkdir -p "$report_dir"
+          {
+            printf 'source_commit=%s\n' "$GUARDIAN_PROOF_SOURCE_COMMIT"
+            printf 'runner_image_os=%s\n' "${ImageOS:-unknown}"
+            printf 'runner_image_version=%s\n' "${ImageVersion:-unknown}"
+            node --version
+            npm --version
+            kind version
+            kubectl version --client --output=yaml
+            docker version --format 'docker-server={{.Server.Version}}'
+          } >"$report_dir/versions.txt"
+
+      - name: Run full final demo
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report_dir="$RUNNER_TEMP/guardian-final-proof"
+
+          set +e
+          npm run --silent demo \
+            >"$report_dir/final-proof.json"
+          demo_status=$?
+          set -e
+
+          printf '{"exitCode":%d,"sourceCommit":"%s"}\n' \
+            "$demo_status" "$GUARDIAN_PROOF_SOURCE_COMMIT" \
+            >"$report_dir/status.json"
+          exit "$demo_status"
+
+      - name: Validate sanitized final report
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+            import { readFile } from "node:fs/promises";
+
+            const report = JSON.parse(
+              await readFile(
+                `${process.env.RUNNER_TEMP}/guardian-final-proof/final-proof.json`,
+                "utf8",
+              ),
+            );
+            const fast = report.fast;
+            const live = report.live;
+            const requiredTrue = [
+              fast?.policyRegistration,
+              fast?.liveAgentFinalizeGate,
+              fast?.httpBridgeAuthCheckpointCrashRecovery,
+              fast?.syntheticApproval,
+              fast?.syntheticDenial,
+              live?.environment?.kindCluster,
+              live?.environment?.realPrometheus,
+              live?.environment?.realLobster,
+              live?.environment?.pinnedImages,
+              live?.ingress?.evidenceThroughGatewayTools,
+              live?.restartReconciliation?.ambiguousManualReviewBlocked,
+              live?.authorization?.offTargetBlocked,
+              live?.authorization?.rbacOtherDeploymentDenied,
+              live?.authorization?.rbacOtherNamespaceDenied,
+              live?.authorization?.rbacSecretsDenied,
+              live?.authorization?.rbacDeleteDenied,
+              live?.authorization?.rbacCreateDenied,
+              live?.mutation?.generationChanged,
+              live?.mutation?.resourceVersionChanged,
+              live?.mutation?.templateMatchesTarget,
+              live?.mutation?.replayGenerationUnchanged,
+              live?.mutation?.replayMutationFingerprintUnchanged,
+              live?.recovery?.resolvedWebhookIsNotRecovery,
+              live?.recovery?.deploymentHealthy,
+              live?.recovery?.prometheusHealthy,
+              live?.recovery?.incidentCompleted,
+              live?.recovery?.completionReadbackConfirmed,
+              live?.replayProtection?.rollbackReplayIsDuplicate,
+              live?.replayProtection?.recoveryReplayBlocked,
+              live?.replayProtection?.recoveryReplayBlockedAfterRestart,
+              live?.replayProtection?.completedStateSurvivedRestart,
+              live?.cleanup?.gatewayStopped,
+              live?.cleanup?.bridgeStopped,
+              live?.cleanup?.portForwardStopped,
+              live?.cleanup?.clusterDeleted,
+              live?.cleanup?.localImageTagsDeleted,
+              live?.cleanup?.temporaryCredentialsDeleted,
+            ];
+
+            if (
+              report.schemaVersion !== 1 ||
+              report.ok !== true ||
+              report.proof !== "dataops-guardian-final-demo" ||
+              report.source?.commit !== process.env.GUARDIAN_PROOF_SOURCE_COMMIT ||
+              report.apiCostUsd !== 0 ||
+              requiredTrue.some((value) => value !== true) ||
+              live?.ingress?.unauthorizedStatus !== 401 ||
+              live?.ingress?.unauthorizedStateCreated !== false ||
+              live?.ingress?.firingDisposition !== "created" ||
+              live?.ingress?.replayDisposition !== "duplicate" ||
+              live?.ingress?.webhookMetricEvidenceCount !== 0 ||
+              live?.approval?.approvedWorkflowStatus !== "ok" ||
+              live?.approval?.deniedWorkflowStatus !== "cancelled" ||
+              live?.approval?.deniedIncidentStage !== "blocked" ||
+              live?.approval?.deniedBlockedBy !== "approval_gate" ||
+              live?.approval?.deniedMutationDispatchCount !== 0 ||
+              live?.restartReconciliation?.ambiguousOutcome !== "unknown" ||
+              live?.restartReconciliation?.ambiguousMutationDispatchCount !== 0 ||
+              live?.restartReconciliation?.appliedOutcome !== "confirmed_succeeded" ||
+              live?.authorization?.offTargetBlockedBy !== "allowlist_gate" ||
+              live?.mutation?.rollbackDecision !== "rolled_back" ||
+              live?.mutation?.dispatchCount !== 1 ||
+              live?.mutation?.immediateReplayDecision !== "duplicate" ||
+              live?.mutation?.postRestartReplayDecision !== "duplicate" ||
+              live?.recovery?.scaleToZeroDecision !== "not_recovered" ||
+              live?.recovery?.scaleToZeroDeploymentHealthy !== false ||
+              live?.recovery?.scaleToZeroIncidentCompleted !== false ||
+              live?.recovery?.finalDecision !== "recovered" ||
+              !Number.isFinite(live?.recovery?.recoveredMetricValue) ||
+              !Number.isFinite(live?.recovery?.threshold) ||
+              live.recovery.recoveredMetricValue < live.recovery.threshold ||
+              live?.replayProtection?.recoveryReplayBlockedBy !==
+                "completed_stage_gate"
+            ) {
+              throw new Error("final proof report failed CI acceptance");
+            }
+          NODE
+          test -z "$(git status --porcelain)"
+          cp \
+            "$RUNNER_TEMP/guardian-final-proof/final-proof.json" \
+            "$RUNNER_TEMP/guardian-final-proof/validated-final-proof.json"
+
+      - name: Check and remove proof leftovers
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          leaked=0
+
+          if ! command -v kind >/dev/null 2>&1; then
+            echo "::error::cannot enumerate proof clusters: kind is unavailable"
+            leaked=1
+          else
+            set +e
+            clusters_output="$(kind get clusters 2>&1)"
+            clusters_status=$?
+            set -e
+            if ((clusters_status != 0)); then
+              echo "::error::cannot enumerate proof clusters"
+              printf '%s\n' "$clusters_output" >&2
+              leaked=1
+              clusters_output=""
+            fi
+            mapfile -t clusters < <(
+              printf '%s\n' "$clusters_output" \
+                | grep '^guardian-final-' || true
+            )
+            for cluster in "${clusters[@]}"; do
+              echo "::error::proof cluster survived cleanup: $cluster"
+              kind delete cluster --name "$cluster" || true
+              leaked=1
+            done
+          fi
+
+          images_output=""
+          if ! command -v docker >/dev/null 2>&1; then
+            echo "::error::cannot enumerate proof images: docker is unavailable"
+            leaked=1
+          elif ! docker info >/dev/null 2>&1; then
+            echo "::error::cannot enumerate proof images: Docker daemon is unavailable"
+            leaked=1
+          else
+            set +e
+            images_output="$(
+              docker image ls --format '{{.Repository}}:{{.Tag}}' 2>&1
+            )"
+            images_status=$?
+            set -e
+            if ((images_status != 0)); then
+              echo "::error::cannot enumerate proof images"
+              printf '%s\n' "$images_output" >&2
+              leaked=1
+              images_output=""
+            fi
+          fi
+          mapfile -t images < <(
+            printf '%s\n' "$images_output" \
+              | grep -E '^guardian-proof/(nginx|prometheus):' || true
+          )
+          for image in "${images[@]}"; do
+            echo "::error::proof image tag survived cleanup: $image"
+            docker image rm "$image" || true
+            leaked=1
+          done
+
+          exit "$leaked"
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: guardian-final-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/guardian-final-proof/validated-final-proof.json
+            ${{ runner.temp }}/guardian-final-proof/status.json
+            ${{ runner.temp }}/guardian-final-proof/versions.txt
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9

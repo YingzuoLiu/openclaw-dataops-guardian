@@ -9,6 +9,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"
 guardian_reexec_proof_on_native_fs \
   "$ROOT_DIR" "scripts/run-final-fast-demo.sh" "demo:fast"
+guardian_require_proof_source_commit "$ROOT_DIR"
 
 RUNTIME_DIR="$(mktemp -d /tmp/guardian-final-fast.XXXXXX)"
 STAGED_GUARDIAN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"

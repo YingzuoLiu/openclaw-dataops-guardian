@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertSanitizedReport,
+  assertSourceCommit,
   buildFastDemoReport,
   buildFullDemoReport,
   buildKindSafetyReport,
 } from "./final-proof-report.mjs";
+
+const SOURCE_COMMIT = "8860724a28fa82ea904e0f399f4d8df1b87f4df8";
 
 function line(value) {
   return `${JSON.stringify(value)}\n`;
@@ -16,6 +19,7 @@ function validKindSummary() {
     schemaVersion: 1,
     ok: true,
     proof: "kind-final-safety",
+    source: { commit: SOURCE_COMMIT },
     environment: {
       kindCluster: true,
       realPrometheus: true,
@@ -136,12 +140,13 @@ describe("final proof report", () => {
         approvalStatus: "denied",
         workflowStatus: "cancelled",
       }),
-    });
+    }, SOURCE_COMMIT);
 
     expect(report).toEqual({
       schemaVersion: 1,
       ok: true,
       proof: "dataops-guardian-fast-demo",
+      source: { commit: SOURCE_COMMIT },
       components: {
         policyRegistration: true,
         liveAgentFinalizeGate: true,
@@ -159,6 +164,7 @@ describe("final proof report", () => {
         schemaVersion: 1,
         ok: true,
         proof: "dataops-guardian-fast-demo",
+        source: { commit: SOURCE_COMMIT },
         components: {
           policyRegistration: true,
           liveAgentFinalizeGate: true,
@@ -171,6 +177,7 @@ describe("final proof report", () => {
     );
     expect(report).toMatchObject({
       ok: true,
+      source: { commit: SOURCE_COMMIT },
       fast: { policyRegistration: true },
       live: { recovery: { incidentCompleted: true } },
     });
@@ -293,6 +300,7 @@ describe("final proof report", () => {
         localImageTagsDeleted: true,
         temporaryCredentialsDeleted: true,
       },
+      sourceCommit: SOURCE_COMMIT,
     });
 
     expect(report).toMatchObject({
@@ -311,8 +319,38 @@ describe("final proof report", () => {
     expect(() =>
       buildKindSafetyReport({
         prepare: { command: "prepare-http", unauthorizedStatus: 200 },
+        sourceCommit: SOURCE_COMMIT,
       }),
     ).toThrow("HTTP ingress");
+  });
+
+  it("binds every released report to one exact source commit", () => {
+    expect(assertSourceCommit(SOURCE_COMMIT)).toBe(SOURCE_COMMIT);
+    expect(() => assertSourceCommit("8860724a")).toThrow(
+      "full lowercase Git SHA",
+    );
+
+    expect(() =>
+      buildFullDemoReport(
+        {
+          schemaVersion: 1,
+          ok: true,
+          proof: "dataops-guardian-fast-demo",
+          source: { commit: SOURCE_COMMIT },
+          components: {
+            policyRegistration: true,
+            liveAgentFinalizeGate: true,
+            httpBridgeAuthCheckpointCrashRecovery: true,
+            syntheticApproval: true,
+            syntheticDenial: true,
+          },
+        },
+        {
+          ...validKindSummary(),
+          source: { commit: "0000000000000000000000000000000000000000" },
+        },
+      ),
+    ).toThrow("kind safety report is not successful");
   });
 
   it("rejects credentials, raw payload fields, and absolute paths", () => {

@@ -12,8 +12,8 @@ become the authority to mutate infrastructure?** The answer in this repository
 is a durable state machine surrounded by deterministic Tool, Reducer, approval,
 allowlist, idempotency, and finalization gates.
 
-> **Current status:** All five steps are complete, and the final one-cluster
-> WSL acceptance run passed on 2026-08-08. The accepted demo drives an
+> **Current status:** All five steps are complete. Release acceptance is the
+> exact-head `Full safety proof` CI job, which drives an
 > authenticated HTTP delivery of an Alertmanager v4-compatible webhook through
 > durable Gateway state, evidence Tools,
 > resumable approval, one allowlisted kind mutation, restart reconciliation,
@@ -53,7 +53,7 @@ Deployment instead of blindly issuing another mutation.
 
 ## Results
 
-- **Final safety proof (Step 5, 2026-08-08):** `npm run demo` combines the no-cost fast
+- **Final safety proof (Step 5):** `npm run demo` combines the no-cost fast
   suite with one isolated kind cluster. Its allowlisted JSON report is emitted
   only after every positive and negative assertion passes and the cluster,
   Gateway, bridge, port-forward, kubeconfigs, and temporary credentials have
@@ -88,8 +88,10 @@ Deployment instead of blindly issuing another mutation.
   | Cluster cleanup | passed |
 
   Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
-- **Automated checks:** the TypeScript build and Vitest suite run on Node.js
-  22.22.2 and Node.js 24.15.0 in CI.
+- **Automated acceptance:** the TypeScript build and Vitest suite run on Node.js
+  22.22.2 and Node.js 24.15.0. After they pass, CI runs the complete demo on
+  Node.js 22.22.2 and validates that its sanitized `ok: true` report is bound
+  to the exact checked-out commit.
 - **Real-model A/B evaluation:** across 24 independent trials—12 baseline and 12
   gated, forming 12 matched prompt pairs—the language-only baseline released 3
   unsupported conclusions; the gated arm released 0. All observed baseline
@@ -135,6 +137,8 @@ npm run demo
 ```
 
 On success, both commands release only an allowlisted, sanitized JSON summary.
+Both aggregate demos require a clean committed worktree and include its full Git
+SHA in the report; uncommitted code cannot become release evidence.
 On failure, they emit a bounded tail of the active local proof log before
 temporary cleanup so that the cause is not discarded. The full command deletes
 its isolated cluster and temporary credentials before it emits a success
@@ -142,11 +146,14 @@ report. Both runners print only phase names while they work and impose bounded
 component deadlines when the standard Linux `timeout` command is available. The
 proofs also disable discovery of unrelated OpenClaw bundled extensions; Guardian
 and Lobster remain explicitly loaded from proof-owned paths. When invoked from a
-Windows-mounted WSL checkout such as `/mnt/c`, each runner first mirrors the
-current non-ignored worktree and its installed `node_modules` into a private
-native-Linux directory under `/tmp`, runs the same command there, and deletes
-the mirror on exit. This avoids DrvFS world-writable modes and small-file ESM
-cold-start timeouts without changing the checkout or reinstalling dependencies.
+Windows-mounted WSL checkout such as `/mnt/c`, each runner requires a clean
+worktree, exports the exact commit into a private native-Linux directory under
+`/tmp`, restores the lockfile-pinned dependencies there, runs the same command,
+and deletes the capsule on exit. It never copies the caller's `node_modules`
+tree or accepts an uncommitted source tree as release evidence. Dependency
+restoration prefers npm's cache and may contact the npm registry. For repeated
+local runs, a checkout under the WSL native filesystem (for example
+`~/Projects`) is faster.
 See the
 [final proof contract](docs/final-safety-proof.md).
 

@@ -1,8 +1,9 @@
 # Final safety proof and reproducible demo (Step 5)
 
-Status: **accepted on Linux/WSL on 2026-08-08**. This is the `v0.2.0`
-release acceptance contract. `npm run demo` passed end to end with an
-allowlisted `ok: true` report after cleanup. It composes the component proofs
+Status: **release-gated by exact-head Linux CI**. This is the `v0.2.0`
+release acceptance contract. CI runs `npm run demo` end to end and requires an
+allowlisted `ok: true` report, exact source-commit binding, and cleanup before
+the job can pass. It composes the component proofs
 from Steps 1-4 and adds bounded live failure and authority cases without
 expanding Guardian into a production orchestrator.
 
@@ -15,6 +16,10 @@ npm ci
 npm run check
 ```
 
+Both aggregate demos require a clean committed worktree. Their released reports
+carry the full source Git SHA, and the full report requires its fast and live
+parts to agree on that SHA.
+
 Run the no-cost fast demo:
 
 ```bash
@@ -25,12 +30,13 @@ npm run demo:fast
 and a scripted local model. It does not use Docker, Kubernetes, an external
 model, or a paid API. It disables discovery of unrelated OpenClaw bundled
 extensions and explicitly loads only the proof-owned Guardian and Lobster
-copies. This keeps the proof valid when WSL DrvFS presents a checkout's
-`node_modules` as world-writable. When started under a Windows-mounted WSL path,
-the runner mirrors the current non-ignored worktree and installed dependencies
-once into a private native-Linux directory under `/tmp`, re-executes there, and
-deletes the mirror on exit. This preserves the exact runtime inspection while
-removing DrvFS small-file latency from plugin and Gateway startup. It aggregates:
+copies. When started under a Windows-mounted WSL path, the runner refuses a
+dirty source tree, exports the exact Git commit into a private native-Linux
+directory under `/tmp`, restores dependencies from `package-lock.json`, and
+re-executes there. The capsule is deleted on exit. This avoids copying tens of
+thousands of installed files from DrvFS while preserving the exact runtime
+inspection. npm cache entries are preferred; the registry may be contacted.
+It aggregates:
 
 The runner also clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`,
 and `OPENCLAW_HOME` overrides before assigning its proof-owned state. A caller's
@@ -133,7 +139,7 @@ from an explicit field allowlist and validates the result recursively.
 
 The full report contains only:
 
-- schema/proof identifiers, overall `ok`, and zero API cost;
+- schema/proof identifiers, the exact source commit, overall `ok`, and zero API cost;
 - boolean environment properties;
 - ingress dispositions and evidence ownership;
 - approval, restart-reconciliation, authorization, mutation, recovery, replay,
@@ -142,7 +148,8 @@ The full report contains only:
 
 It cannot contain token, secret, password, credential, kubeconfig or absolute
 path, PodTemplate, raw webhook/evidence payload, prompt, transcript, or
-container environment content. The final report is withheld if any matrix,
+container environment content. The final report is withheld if the fast and
+live reports are not bound to the same full Git SHA, or if any matrix,
 sanitization, or explicit cleanup assertion fails.
 
 ## Cleanup and isolation

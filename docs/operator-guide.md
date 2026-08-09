@@ -135,19 +135,24 @@ npm run check
 npm run demo:fast
 ```
 
+The aggregate demos require a clean committed worktree and bind their sanitized
+reports to its full Git SHA. Use component proof commands while iterating on
+uncommitted changes.
+
 The fast demo aggregates policy registration, a live Agent finalize gate, the
 HTTP bridge and crash-window checks, and synthetic approve/deny paths. It uses
 isolated OpenClaw state directories and loopback-only fixtures, with no Docker,
 cluster, paid API, or external model. Proof clients temporarily disable device
 authentication only inside their disposable local profiles and restore it on
 exit. The runner explicitly loads Guardian and Lobster while disabling discovery
-of unrelated bundled extensions, so a WSL checkout under `/mnt/c` does not fail
-on DrvFS world-writable modes. Both aggregate runners also detect a
-Windows-mounted WSL worktree, copy its current non-ignored files and installed
-`node_modules` into a private native-Linux directory under `/tmp`, re-execute
-there, and delete that mirror on exit. No dependency reinstall or network access
-is added, and the source checkout is not changed. This amortizes DrvFS small-file
-cost before OpenClaw loads the plugin and starts its Gateways.
+of unrelated bundled extensions. For a WSL checkout under `/mnt/c`, both
+aggregate runners require a clean worktree, export the exact commit into a
+private native-Linux capsule under `/tmp`, restore dependencies from the
+committed lockfile, re-execute there, and delete the capsule on exit. The source
+checkout is not changed, the caller's installed `node_modules` is never copied,
+and an uncommitted tree cannot be reported as release evidence. npm cache
+entries are preferred, but dependency restoration may contact the npm registry.
+A native WSL checkout under `~/Projects` is recommended for repeated runs.
 
 The runner clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`, and
 `OPENCLAW_HOME` overrides before assigning its proof-owned state directory, so
@@ -167,8 +172,9 @@ npm run demo
 
 While running, it emits phase names only and applies component deadlines when
 the standard Linux `timeout` command is available. On success, it emits only an
-allowlisted JSON summary after cleanup. On failure, it emits a bounded tail of
-the active local proof log before cleanup. See the [final safety
+allowlisted JSON summary, including the exact source commit, after cleanup. On
+failure, it emits a bounded tail of the active local proof log before cleanup.
+See the [final safety
 proof](final-safety-proof.md) for the complete positive and negative matrix.
 
 ## Safety model

@@ -10,6 +10,14 @@ function assert(condition, message) {
   }
 }
 
+export function assertSourceCommit(value) {
+  assert(
+    typeof value === "string" && /^[0-9a-f]{40}$/.test(value),
+    "proof source commit must be a full lowercase Git SHA",
+  );
+  return value;
+}
+
 export function parseJsonLines(text) {
   return text
     .split("\n")
@@ -65,7 +73,8 @@ export function assertSanitizedReport(value, forbiddenValues = []) {
   return value;
 }
 
-export function buildFastDemoReport(logs) {
+export function buildFastDemoReport(logs, sourceCommit) {
+  const commit = assertSourceCommit(sourceCommit);
   const policy = findResult(
     parseJsonLines(logs.policy),
     (entry) => entry.ok === true && Array.isArray(entry.typedHooks),
@@ -141,6 +150,7 @@ export function buildFastDemoReport(logs) {
     schemaVersion: 1,
     ok: true,
     proof: "dataops-guardian-fast-demo",
+    source: { commit },
     components: {
       policyRegistration: true,
       liveAgentFinalizeGate: true,
@@ -316,13 +326,15 @@ export function buildFullDemoReport(fastReport, kindReport) {
       fastComponents.liveAgentFinalizeGate === true &&
       fastComponents.httpBridgeAuthCheckpointCrashRecovery === true &&
       fastComponents.syntheticApproval === true &&
-      fastComponents.syntheticDenial === true,
+      fastComponents.syntheticDenial === true &&
+      /^[0-9a-f]{40}$/.test(fastReport?.source?.commit ?? ""),
     "fast demo report is not successful",
   );
   assert(
     kindReport?.schemaVersion === 1 &&
       kindReport.proof === "kind-final-safety" &&
-      kindReport.ok === true,
+      kindReport.ok === true &&
+      kindReport?.source?.commit === fastReport.source.commit,
     "kind safety report is not successful",
   );
   const live = selectKindSafetySummary(kindReport);
@@ -330,6 +342,7 @@ export function buildFullDemoReport(fastReport, kindReport) {
     schemaVersion: 1,
     ok: true,
     proof: "dataops-guardian-final-demo",
+    source: { commit: fastReport.source.commit },
     fast: fastReport.components,
     live,
     apiCostUsd: 0,
@@ -353,7 +366,9 @@ export function buildKindSafetyReport(parts) {
     show,
     rbac,
     cleanup,
+    sourceCommit,
   } = parts;
+  const commit = assertSourceCommit(sourceCommit);
   assert(
     prepare?.command === "prepare-http" &&
       prepare.unauthorizedStatus === 401 &&
@@ -485,6 +500,7 @@ export function buildKindSafetyReport(parts) {
     schemaVersion: 1,
     ok: true,
     proof: "kind-final-safety",
+    source: { commit },
     environment: {
       kindCluster: true,
       realPrometheus: true,
@@ -578,7 +594,10 @@ async function main() {
     );
     process.stdout.write(
       `${JSON.stringify(
-        buildFastDemoReport({ policy, liveHook, bridge, approved, denied }),
+        buildFastDemoReport(
+          { policy, liveHook, bridge, approved, denied },
+          process.env.GUARDIAN_PROOF_SOURCE_COMMIT,
+        ),
         null,
         2,
       )}\n`,
@@ -617,7 +636,10 @@ async function main() {
     const values = args.map((value) => JSON.parse(value));
     process.stdout.write(
       `${JSON.stringify(
-        buildKindSafetyReport(Object.fromEntries(names.map((name, index) => [name, values[index]]))),
+        buildKindSafetyReport({
+          ...Object.fromEntries(names.map((name, index) => [name, values[index]])),
+          sourceCommit: process.env.GUARDIAN_PROOF_SOURCE_COMMIT,
+        }),
         null,
         2,
       )}\n`,

@@ -165,15 +165,42 @@ describe("final demo source contract", () => {
         'ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
         'source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"',
         "guardian_reexec_proof_on_native_fs",
+        'guardian_require_proof_source_commit "$ROOT_DIR"',
         'RUNTIME_DIR="$(mktemp -d',
       ]);
     }
     expect(helper).toContain("/mnt/[A-Za-z]/*");
-    expect(helper).toContain("--cached --others --exclude-standard -z");
-    expect(helper).toContain('printf "node_modules\\0"');
-    expect(helper).toContain("--no-same-owner --no-same-permissions");
+    expect(helper).toContain("guardian_require_proof_source_commit");
+    expect(helper).toContain("status");
+    expect(helper).toContain("--porcelain=v1 --untracked-files=all");
+    expect(helper).toContain('git init --quiet --template= "$destination_root"');
+    expect(helper).toContain(
+      '--quiet --depth=1 --no-tags "$source_root" "$source_commit"',
+    );
+    expect(helper).toContain("checkout --quiet --detach FETCH_HEAD");
+    expect(helper).not.toContain("git archive");
+    expect(helper).not.toContain("ls-files");
+    expect(helper).not.toContain('printf "node_modules\\0"');
+    expect(helper).toContain(
+      "npm ci --ignore-scripts --no-audit --no-fund --prefer-offline",
+    );
+    expect(helper).toContain("GUARDIAN_PROOF_NATIVE_INSTALL_TIMEOUT");
+    expect(helper).toContain("last dependency install diagnostic lines:");
+    expect(helper).toContain('tail -n 120 "$install_log"');
     expect(helper).toContain('TMPDIR="$staged_tmp"');
     expect(helper).toContain("GUARDIAN_PROOF_NATIVE_STAGED=1");
+    expect(helper).toContain("GUARDIAN_PROOF_FORCE_NATIVE_STAGE=0");
+    expect(helper).toContain(
+      'GUARDIAN_PROOF_SOURCE_COMMIT="$source_commit"',
+    );
+    expect(helper).not.toContain(
+      '[[ "${GUARDIAN_PROOF_NATIVE_STAGED:-0}" == "1" ]]',
+    );
+    expectInOrder(helper, [
+      "cleanup_native_stage() {",
+      "trap cleanup_native_stage EXIT",
+      'stage_root="$(mktemp -d',
+    ]);
     expect(helper).toContain("find \"$stage_root\" -depth -delete");
   });
 

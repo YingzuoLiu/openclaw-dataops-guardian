@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/guardian-proof-native-stage.sh"
 guardian_reexec_proof_on_native_fs \
   "$ROOT_DIR" "scripts/run-final-demo.sh" "demo"
+guardian_require_proof_source_commit "$ROOT_DIR"
 
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/guardian-final-demo.XXXXXX")"
 CURRENT_COMPONENT="prerequisite checks"
