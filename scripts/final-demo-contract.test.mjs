@@ -70,6 +70,24 @@ describe("final demo source contract", () => {
     );
     expect(fast).toContain('tail -n 120 "$CURRENT_LOG"');
     expect(fast).toContain('demo:fast failed during ${CURRENT_COMPONENT} (exit ${status})');
+    expect(fast).toContain("run_component 600s npm run build");
+    expect(occurrenceCount(fast, "npm run build")).toBe(1);
+    expect(occurrenceCount(fast, 'GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP"')).toBe(5);
+    expectInOrder(fast, [
+      "run_component 600s npm run build",
+      'cp -R "$ROOT_DIR/dist"',
+      '\"$STAGED_GUARDIAN_DIR\" >\"$PREBUILT_STAMP\"',
+      'CURRENT_COMPONENT="policy registration"',
+    ]);
+    for (const section of [
+      between(fast, 'CURRENT_COMPONENT="policy registration"', 'CURRENT_COMPONENT="live Agent hook"'),
+      between(fast, 'CURRENT_COMPONENT="live Agent hook"', 'CURRENT_COMPONENT="Alertmanager HTTP bridge"'),
+      between(fast, 'CURRENT_COMPONENT="Alertmanager HTTP bridge"', 'CURRENT_COMPONENT="synthetic approval"'),
+      between(fast, 'CURRENT_COMPONENT="synthetic approval"', 'CURRENT_COMPONENT="synthetic denial"'),
+      between(fast, 'CURRENT_COMPONENT="synthetic denial"', 'CURRENT_COMPONENT="sanitized summary"'),
+    ]) {
+      expect(occurrenceCount(section, 'GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP"')).toBe(1);
+    }
     expect(fast).toContain('run_component 120s env');
     expect(fast).toContain('run_component 420s env');
     expect(fast).toContain('run_component 300s env');
@@ -85,22 +103,42 @@ describe("final demo source contract", () => {
       'GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR"',
     );
 
-    const [policy, live, bridge, vertical] = await Promise.all([
+    const [prebuiltGuard, policy, live, bridge, vertical] = await Promise.all([
+      source("scripts/guardian-proof-build.sh"),
       source("scripts/run-policy-registration-proof.sh"),
       source("scripts/run-live-hook-invocation-proof.sh"),
       source("scripts/run-alertmanager-http-bridge-proof.sh"),
       source("scripts/run-vertical-slice-proof.sh"),
     ]);
+    expect(prebuiltGuard).toContain('if [[ -z "$stamp" ]]');
+    expect(prebuiltGuard).toContain("npm run build");
+    expect(prebuiltGuard).toContain('"$plugin_dir/dist/index.js"');
+    expect(prebuiltGuard).toContain(
+      "prebuilt proof stamp does not match the staged plugin",
+    );
     for (const component of [policy, live, bridge, vertical]) {
+      expect(component).toContain("guardian-proof-build.sh");
+      expect(component).toContain("guardian_build_or_verify_prebuilt");
+      expect(component).toContain("--batch-json");
       expect(component).toContain("GUARDIAN_PROOF_PLUGIN_DIR");
       expect(component).toContain("plugins.load.paths");
       expect(component).toContain("plugins.entries.dataops-guardian.enabled");
     }
+    expect(policy).toContain("--batch-json \"$POLICY_BATCH_JSON\"");
+    expect(policy).toContain("[policy] configure");
+    expect(policy).toContain("[policy] inspect");
+    expect(occurrenceCount(policy, "openclaw config set")).toBe(1);
+    expect(occurrenceCount(live, "openclaw config set")).toBe(1);
+    expect(occurrenceCount(bridge, "openclaw\" config set")).toBe(1);
+    expect(occurrenceCount(vertical, "openclaw config set")).toBe(1);
+    expect(live).toContain("[live-hook] configure");
+    expect(bridge).toContain("[bridge] configure");
+    expect(vertical).toContain("[vertical] configure");
     expect(vertical).toContain(
       'LOBSTER_PLUGIN_DIR="${GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR:-$PWD/node_modules/@openclaw/lobster}"',
     );
     expect(vertical).toContain(
-      "plugins.entries.lobster.enabled true",
+      '{ path: "plugins.entries.lobster.enabled", value: true }',
     );
 
     expectInOrder(full, [

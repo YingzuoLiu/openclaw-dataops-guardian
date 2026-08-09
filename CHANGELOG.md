@@ -19,8 +19,9 @@ semantic versioning for its source tags; it is not published to npm or ClawHub.
   cases, an allowlisted JSON report, and explicit cleanup verification.
 - WSL-safe temporary plugin staging for Windows-mounted checkouts, explicit
   exclusion of unrelated bundled extensions, phase-only progress, bounded
-  component deadlines, caller-profile isolation, and active-component
-  diagnostics on failed proof runs.
+  component deadlines, stamped single-build artifact reuse, batched proof
+  configuration, caller-profile isolation, and active-component diagnostics on
+  failed proof runs.
 
 ### Security
 

@@ -9,6 +9,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUNTIME_DIR="$(mktemp -d /tmp/guardian-final-fast.XXXXXX)"
 STAGED_GUARDIAN_DIR="$RUNTIME_DIR/plugins/dataops-guardian"
 STAGED_LOBSTER_DIR="$RUNTIME_DIR/plugins/lobster"
+PREBUILT_STAMP="$RUNTIME_DIR/prebuilt-artifact"
 CURRENT_COMPONENT="initialization"
 CURRENT_LOG=""
 PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
@@ -99,8 +100,8 @@ read -r \
 CURRENT_COMPONENT="safe proof staging"
 CURRENT_LOG="$RUNTIME_DIR/staging.log"
 progress "$CURRENT_COMPONENT"
+run_component 600s npm run build
 {
-  npm run build
   mkdir -p "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"
   cp \
     "$ROOT_DIR/package.json" \
@@ -110,13 +111,16 @@ progress "$CURRENT_COMPONENT"
   ln -s "$ROOT_DIR/node_modules" "$STAGED_GUARDIAN_DIR/node_modules"
   cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/." "$STAGED_LOBSTER_DIR/"
   chmod -R go-w "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"
-} >"$CURRENT_LOG" 2>&1
+  printf '%s\n' "$STAGED_GUARDIAN_DIR" >"$PREBUILT_STAMP"
+  chmod go-rwx "$PREBUILT_STAMP"
+} >>"$CURRENT_LOG" 2>&1
 
 CURRENT_COMPONENT="policy registration"
 CURRENT_LOG="$RUNTIME_DIR/policy.log"
 progress "$CURRENT_COMPONENT"
 run_component 120s env \
   OPENCLAW_STATE_DIR="$RUNTIME_DIR/policy" \
+  GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-policy-registration-proof.sh
 
@@ -128,6 +132,7 @@ run_component 180s env \
   OPENCLAW_GATEWAY_PORT="$LIVE_GATEWAY_PORT" \
   GUARDIAN_MOCK_MODEL_PORT="$LIVE_MODEL_PORT" \
   OPENCLAW_WORKSPACE_DIR="$RUNTIME_DIR/live-hook-workspace" \
+  GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-live-hook-invocation-proof.sh
 
@@ -137,6 +142,7 @@ progress "$CURRENT_COMPONENT"
 run_component 420s env \
   OPENCLAW_GATEWAY_PORT="$BRIDGE_GATEWAY_PORT" \
   ALERTMANAGER_BRIDGE_PORT="$BRIDGE_HTTP_PORT" \
+  GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   bash scripts/run-alertmanager-http-bridge-proof.sh
 
@@ -150,6 +156,7 @@ run_component 300s env \
   OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-approve" \
   OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/approve-resume.json" \
   LOBSTER_STATE_DIR="$RUNTIME_DIR/approve-lobster" \
+  GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=approve \
@@ -165,6 +172,7 @@ run_component 300s env \
   OPENCLAW_VERTICAL_SESSION_KEY="agent:main:dataops-guardian-final-fast-deny" \
   OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/deny-resume.json" \
   LOBSTER_STATE_DIR="$RUNTIME_DIR/deny-lobster" \
+  GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=deny \

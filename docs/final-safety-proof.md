@@ -31,7 +31,12 @@ copies. This keeps the proof valid when WSL DrvFS presents a checkout's
 The runner also clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`,
 and `OPENCLAW_HOME` overrides before assigning its proof-owned state. A caller's
 normal OpenClaw profile therefore cannot override the acceptance boundary or be
-mutated by the proof.
+mutated by the proof. The aggregate fast runner performs one bounded build
+before staging the proof-owned plugin and reuses that exact artifact across all
+five components through a run-owned stamp; component proof scripts still build
+by default when invoked directly. Each component applies its proof configuration
+in one validated batch, avoiding repeated CLI cold starts and filesystem scans
+on DrvFS.
 
 | Component | Required result |
 |---|---|

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/scripts/guardian-proof-build.sh"
 RUNTIME_DIR="$(mktemp -d "${TMPDIR:-/tmp}/guardian-alertmanager-http-bridge.XXXXXX")"
 
 export OPENCLAW_STATE_DIR="$RUNTIME_DIR/openclaw"
@@ -105,26 +106,35 @@ run_proof_phase() {
 
 mkdir -p "$OPENCLAW_STATE_DIR" "$BRIDGE_STATE_DIR"
 cd "$ROOT_DIR"
-npm run build
+guardian_build_or_verify_prebuilt \
+  "$ROOT_DIR/dist/alertmanager/http-bridge/run.js"
 
-if [[ -n "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
-  PLUGIN_LOAD_PATHS="$(
-    node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
-      "$GUARDIAN_PROOF_PLUGIN_DIR"
-  )"
-  "$ROOT_DIR/node_modules/.bin/openclaw" config set \
-    plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
-  "$ROOT_DIR/node_modules/.bin/openclaw" config set \
-    plugins.entries.dataops-guardian.enabled true >/dev/null
-else
+if [[ -z "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
   "$ROOT_DIR/node_modules/.bin/openclaw" plugins install \
     --link "$ROOT_DIR" >/dev/null
 fi
-"$ROOT_DIR/node_modules/.bin/openclaw" config set gateway.mode local >/dev/null
+BRIDGE_BATCH_JSON="$(
+  node -e '
+    const [pluginDir, gatewayPort] = process.argv.slice(1);
+    const entries = pluginDir
+      ? [
+          { path: "plugins.load.paths", value: [pluginDir] },
+          { path: "plugins.entries.dataops-guardian.enabled", value: true },
+        ]
+      : [{ path: "plugins.entries.dataops-guardian.enabled", value: true }];
+    entries.push(
+      { path: "gateway.mode", value: "local" },
+      { path: "gateway.port", value: Number(gatewayPort) },
+      { path: "gateway.controlUi.dangerouslyDisableDeviceAuth", value: true },
+    );
+    process.stdout.write(JSON.stringify(entries));
+  ' \
+    "${GUARDIAN_PROOF_PLUGIN_DIR:-}" \
+    "$OPENCLAW_GATEWAY_PORT"
+)"
+printf '[bridge] configure\n' >&2
 "$ROOT_DIR/node_modules/.bin/openclaw" config set \
-  gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
-"$ROOT_DIR/node_modules/.bin/openclaw" config set \
-  gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
+  --batch-json "$BRIDGE_BATCH_JSON" >/dev/null
 
 # --- Bridge instance #1: request validation, core routing, and the first
 #     deferred checkpoint (blocking remediation attempt still running). ---

@@ -1,25 +1,37 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROOF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PROOF_SCRIPT_DIR/guardian-proof-build.sh"
+
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$PWD/.openclaw-policy-proof}"
 
-npm run build
+guardian_build_or_verify_prebuilt
 if [[ -n "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
-  PLUGIN_LOAD_PATHS="$(
-    node -e 'process.stdout.write(JSON.stringify(process.argv.slice(1)))' \
+  POLICY_BATCH_JSON="$(
+    node -e '
+      const pluginDir = process.argv[1];
+      process.stdout.write(JSON.stringify([
+        { path: "plugins.load.paths", value: [pluginDir] },
+        { path: "plugins.entries.dataops-guardian.enabled", value: true },
+        { path: "plugins.entries.dataops-guardian.hooks.allowConversationAccess", value: true },
+        { path: "plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns", value: true },
+      ]));
+    ' \
       "$GUARDIAN_PROOF_PLUGIN_DIR"
   )"
-  ./node_modules/.bin/openclaw config set \
-    plugins.load.paths "$PLUGIN_LOAD_PATHS" >/dev/null
-  ./node_modules/.bin/openclaw config set \
-    plugins.entries.dataops-guardian.enabled true >/dev/null
 else
   ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+  POLICY_BATCH_JSON='[
+    {"path":"plugins.entries.dataops-guardian.enabled","value":true},
+    {"path":"plugins.entries.dataops-guardian.hooks.allowConversationAccess","value":true},
+    {"path":"plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns","value":true}
+  ]'
 fi
+printf '[policy] configure\n' >&2
 ./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.hooks.allowConversationAccess true >/dev/null
-./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns true >/dev/null
+  --batch-json "$POLICY_BATCH_JSON" >/dev/null
+printf '[policy] inspect\n' >&2
 ./node_modules/.bin/openclaw plugins inspect \
   dataops-guardian --runtime --json >"$OPENCLAW_STATE_DIR/policy-inspect.json"
 

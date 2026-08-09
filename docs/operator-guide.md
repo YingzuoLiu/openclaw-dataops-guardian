@@ -146,7 +146,11 @@ on DrvFS world-writable modes. It also clears inherited `OPENCLAW_CONFIG_PATH`,
 `OPENCLAW_PROFILE`, and `OPENCLAW_HOME` overrides before assigning its
 proof-owned state directory, so an exported caller profile cannot redirect the
 run into normal OpenClaw state. Never point a proof script at a normal Gateway
-profile.
+profile. The aggregate runner builds once before staging and reuses that
+artifact for its five components only after validating a run-owned stamp and
+the staged files; direct component proof commands continue to build for
+themselves. Each component applies its proof configuration in one validated
+batch to avoid repeated CLI cold starts and filesystem scans on DrvFS.
 
 To run the full release proof on Linux/WSL with a reachable Docker daemon,
 `kind`, and `kubectl`:
