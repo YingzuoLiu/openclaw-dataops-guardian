@@ -233,6 +233,12 @@ describe("final demo source contract", () => {
     expect(runner).toContain("local proof image tag still exists after cleanup");
     expect(runner).toContain("proof ports must be distinct");
     expect(runner).toContain('kill -0 "$pid"');
+    expect(runner).toContain(
+      'exec {probe_fd}<>"/dev/tcp/127.0.0.1/${port}"',
+    );
+    expect(runner).toContain("exec {probe_fd}>&-");
+    expect(runner).not.toContain('exec 3<>"/dev/tcp');
+    expect(runner).not.toContain("exec 3>&-");
     expect(runner).toContain('`${ports.join(" ")}\\n`');
     expect(runner).toContain("kind safety proof failed during ${CURRENT_PHASE}");
     expect(runner).toContain("export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1");

@@ -118,15 +118,15 @@ wait_for_tcp_port() {
   local label="$2"
   local pid="$3"
   local log_file="$4"
+  local probe_fd
   for _ in $(seq 1 480); do
     if ! kill -0 "$pid" 2>/dev/null; then
       echo "$label process exited before becoming ready" >&2
       tail -n 100 "$log_file" >&2 || true
       return 1
     fi
-    if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
-      exec 3>&-
-      exec 3<&-
+    if { exec {probe_fd}<>"/dev/tcp/127.0.0.1/${port}"; } 2>/dev/null; then
+      exec {probe_fd}>&-
       sleep 0.1
       if kill -0 "$pid" 2>/dev/null; then
         return 0
