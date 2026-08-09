@@ -319,3 +319,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           compression-level: 9
+
+  # Temporary aliases for two historical check-context names in the main
+  # ruleset. Remove them after the ruleset requires the current exact-version
+  # jobs; neither alias can pass unless every current release gate passes.
+  required-status-compatibility:
+    name: ${{ matrix.context }}
+    if: ${{ always() }}
+    needs:
+      - check
+      - integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    strategy:
+      fail-fast: false
+      matrix:
+        context:
+          - Node 24
+          - Node 22.19.0
+
+    steps:
+      - name: Bridge historical ruleset context to current acceptance
+        shell: bash
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          INTEGRATION_RESULT: ${{ needs.integration.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$CHECK_RESULT" != success || "$INTEGRATION_RESULT" != success ]]; then
+            echo "::error::current release acceptance did not pass"
+            printf 'check=%s integration=%s\n' \
+              "$CHECK_RESULT" "$INTEGRATION_RESULT" >&2
+            exit 1
+          fi
