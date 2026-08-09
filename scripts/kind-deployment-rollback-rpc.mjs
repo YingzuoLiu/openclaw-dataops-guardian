@@ -94,7 +94,7 @@ const client = new GatewayClient({
   token: GATEWAY_TOKEN,
   clientName: "gateway-client",
   clientDisplayName: "dataops-guardian-kind-deployment-rollback",
-  clientVersion: "2026.6.9",
+  clientVersion: "2026.6.34",
   platform: process.platform,
   mode: "backend",
   requestTimeoutMs: 20_000,

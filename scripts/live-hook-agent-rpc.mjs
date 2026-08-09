@@ -24,7 +24,7 @@ const client = new GatewayClient({
   token,
   clientName: "openclaw-tui",
   clientDisplayName: "dataops-guardian-live-hook-proof",
-  clientVersion: "2026.6.9",
+  clientVersion: "2026.6.34",
   platform: process.platform,
   mode: "ui",
   role: "operator",

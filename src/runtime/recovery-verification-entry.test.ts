@@ -8,6 +8,7 @@ import type { IncidentState, RemediationTarget } from "../state/incident-state.j
 import {
   beginRemediationAttempt,
   finishRemediationAttempt,
+  recordRecoveryCheck,
 } from "../state/incident-workflow.js";
 import { persistDeploymentRecoveryVerification } from "./recovery-verification-entry.js";
 
@@ -89,9 +90,12 @@ function result(): DeploymentPrometheusRecoveryResult {
 }
 
 function storeReturning(state: IncidentState) {
+  let current = state;
   return {
-    describeIncidentState: vi.fn(async () => state as never),
-    persistIncidentState: vi.fn(async () => undefined),
+    describeIncidentState: vi.fn(async () => current as never),
+    persistIncidentState: vi.fn(async (_sessionKey, nextState) => {
+      current = nextState;
+    }),
   };
 }
 
@@ -107,6 +111,7 @@ describe("persistDeploymentRecoveryVerification", () => {
     });
 
     expect(store.describeIncidentState).toHaveBeenCalledWith("agent:main:step4");
+    expect(store.describeIncidentState).toHaveBeenCalledTimes(2);
     expect(completed.stage).toBe("completed");
     expect(completed.evidence.at(-1)).toMatchObject({
       source: "guardian_deployment_prometheus_recovery",
@@ -142,6 +147,204 @@ describe("persistDeploymentRecoveryVerification", () => {
       }),
     ).rejects.toThrow("aggregate decision is inconsistent");
     expect(inconsistentDecisionStore.persistIncidentState).not.toHaveBeenCalled();
+  });
+
+  it("requires approved state and a valid non-stale checkedAt without writing", async () => {
+    const nonApprovedStore = storeReturning({
+      ...stateInRecovery(),
+      approvalStatus: "denied",
+    });
+    await expect(
+      persistDeploymentRecoveryVerification({
+        sessionKey: "agent:main:step4",
+        idempotencyKey,
+        target,
+        result: result(),
+        store: nonApprovedStore,
+      }),
+    ).rejects.toThrow("approvalStatus=approved");
+    expect(nonApprovedStore.persistIncidentState).not.toHaveBeenCalled();
+
+    for (const invalidCheckedAt of ["not-a-time", "2026-08-07"]) {
+      const invalidTimeStore = storeReturning(stateInRecovery());
+      await expect(
+        persistDeploymentRecoveryVerification({
+          sessionKey: "agent:main:step4",
+          idempotencyKey,
+          target,
+          result: { ...result(), checkedAt: invalidCheckedAt },
+          store: invalidTimeStore,
+        }),
+      ).rejects.toThrow("checkedAt must be a valid timestamp");
+      expect(invalidTimeStore.persistIncidentState).not.toHaveBeenCalled();
+    }
+
+    const staleStore = storeReturning({
+      ...stateInRecovery(),
+      updatedAt: "2026-08-07T00:00:04.000Z",
+    });
+    await expect(
+      persistDeploymentRecoveryVerification({
+        sessionKey: "agent:main:step4",
+        idempotencyKey,
+        target,
+        result: result(),
+        store: staleStore,
+      }),
+    ).rejects.toThrow("result is stale");
+    expect(staleStore.persistIncidentState).not.toHaveBeenCalled();
+  });
+
+  it("binds recovery to the latest succeeded attempt", async () => {
+    const firstAttemptState = stateInRecovery();
+    const secondKey = "attempt-2";
+    const secondTarget = { ...target, fromRevision: 3, toRevision: 2 };
+    const restarted = beginRemediationAttempt(
+      { ...firstAttemptState, stage: "remediation" },
+      {
+        idempotencyKey: secondKey,
+        target: secondTarget,
+        startedAt: "2026-08-07T00:00:02.000Z",
+      },
+    );
+    const latestState = finishRemediationAttempt(restarted.state, {
+      idempotencyKey: secondKey,
+      status: "succeeded",
+      finishedAt: "2026-08-07T00:00:03.000Z",
+      error: null,
+    }).state;
+    const store = storeReturning(latestState);
+
+    await expect(
+      persistDeploymentRecoveryVerification({
+        sessionKey: "agent:main:step4",
+        idempotencyKey,
+        target,
+        result: result(),
+        store,
+      }),
+    ).rejects.toThrow("latest succeeded remediation attempt");
+    expect(store.persistIncidentState).not.toHaveBeenCalled();
+
+    const latestResult = {
+      ...result(),
+      checkedAt: "2026-08-07T00:00:04.000Z",
+      notBefore: "2026-08-07T00:00:03.000Z",
+      target: secondTarget as never,
+    };
+    const completed = await persistDeploymentRecoveryVerification({
+      sessionKey: "agent:main:step4",
+      idempotencyKey: secondKey,
+      target: secondTarget,
+      result: latestResult,
+      store,
+    });
+
+    expect(completed.stage).toBe("completed");
+    expect(store.persistIncidentState).toHaveBeenCalledWith(
+      "agent:main:step4",
+      completed,
+    );
+  });
+
+  it("persists a consistent not_recovered result only to remediation", async () => {
+    const store = storeReturning(stateInRecovery());
+    const unhealthy = result();
+    unhealthy.decision = "not_recovered";
+    unhealthy.deployment = {
+      ...unhealthy.deployment,
+      healthy: false,
+      issues: ["desired_replicas_not_positive"],
+      desiredReplicas: 0,
+      updatedReplicas: 0,
+      availableReplicas: 0,
+    };
+
+    const next = await persistDeploymentRecoveryVerification({
+      sessionKey: "agent:main:step4",
+      idempotencyKey,
+      target,
+      result: unhealthy,
+      store,
+    });
+
+    expect(next.stage).toBe("remediation");
+    expect(next.stage).not.toBe("completed");
+    expect(store.persistIncidentState).toHaveBeenCalledWith(
+      "agent:main:step4",
+      next,
+    );
+  });
+
+  it("blocks a consistent not_recovered result when the retry budget is exhausted", async () => {
+    let exhausted = recordRecoveryCheck(stateInRecovery(), {
+      healthy: false,
+      summary: "First recovery check failed.",
+      checkedAt: "2026-08-07T00:00:02.000Z",
+    });
+
+    for (const attempt of [
+      {
+        idempotencyKey: "attempt-2",
+        startedAt: "2026-08-07T00:00:03.000Z",
+        finishedAt: "2026-08-07T00:00:04.000Z",
+        checkedAt: "2026-08-07T00:00:05.000Z",
+      },
+      {
+        idempotencyKey: "attempt-3",
+        startedAt: "2026-08-07T00:00:06.000Z",
+        finishedAt: "2026-08-07T00:00:07.000Z",
+        checkedAt: "2026-08-07T00:00:08.000Z",
+      },
+    ]) {
+      exhausted = beginRemediationAttempt(exhausted, {
+        idempotencyKey: attempt.idempotencyKey,
+        target,
+        startedAt: attempt.startedAt,
+      }).state;
+      exhausted = finishRemediationAttempt(exhausted, {
+        idempotencyKey: attempt.idempotencyKey,
+        status: "succeeded",
+        finishedAt: attempt.finishedAt,
+        error: null,
+      }).state;
+      if (attempt.idempotencyKey === "attempt-2") {
+        exhausted = recordRecoveryCheck(exhausted, {
+          healthy: false,
+          summary: "Second recovery check failed.",
+          checkedAt: attempt.checkedAt,
+        });
+      }
+    }
+
+    const store = storeReturning(exhausted);
+    const unhealthy = result();
+    unhealthy.decision = "not_recovered";
+    unhealthy.checkedAt = "2026-08-07T00:00:08.000Z";
+    unhealthy.notBefore = "2026-08-07T00:00:07.000Z";
+    unhealthy.deployment = {
+      ...unhealthy.deployment,
+      healthy: false,
+      issues: ["desired_replicas_not_positive"],
+      desiredReplicas: 0,
+      updatedReplicas: 0,
+      availableReplicas: 0,
+    };
+
+    const blocked = await persistDeploymentRecoveryVerification({
+      sessionKey: "agent:main:step4",
+      idempotencyKey: "attempt-3",
+      target,
+      result: unhealthy,
+      store,
+    });
+
+    expect(blocked.stage).toBe("blocked");
+    expect(blocked.stage).not.toBe("completed");
+    expect(store.persistIncidentState).toHaveBeenCalledWith(
+      "agent:main:step4",
+      blocked,
+    );
   });
 
   it("binds against the store's current state, not a snapshot the caller held during a poll", async () => {
@@ -204,6 +407,49 @@ describe("persistDeploymentRecoveryVerification", () => {
       }),
     ).rejects.toThrow("recovery verification cannot read incident state");
     expect(store.persistIncidentState).not.toHaveBeenCalled();
+  });
+
+  it("does not release completion when the persisted state cannot be read back", async () => {
+    let reads = 0;
+    const store = {
+      describeIncidentState: vi.fn(async () => {
+        reads += 1;
+        return reads === 1 ? (stateInRecovery() as never) : undefined;
+      }),
+      persistIncidentState: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      persistDeploymentRecoveryVerification({
+        sessionKey: "agent:main:step4",
+        idempotencyKey,
+        target,
+        result: result(),
+        store,
+      }),
+    ).rejects.toThrow("cannot confirm persisted state: missing_state");
+    expect(store.persistIncidentState).toHaveBeenCalledOnce();
+    expect(store.describeIncidentState).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not release completion when readback returns a stale state", async () => {
+    const stale = stateInRecovery();
+    const store = {
+      describeIncidentState: vi.fn(async () => stale as never),
+      persistIncidentState: vi.fn(async () => undefined),
+    };
+
+    await expect(
+      persistDeploymentRecoveryVerification({
+        sessionKey: "agent:main:step4",
+        idempotencyKey,
+        target,
+        result: result(),
+        store,
+      }),
+    ).rejects.toThrow("persisted state readback mismatch");
+    expect(store.persistIncidentState).toHaveBeenCalledOnce();
+    expect(store.describeIncidentState).toHaveBeenCalledTimes(2);
   });
 
   it("keeps the real proof on the gated Tool and production persistence entry", async () => {

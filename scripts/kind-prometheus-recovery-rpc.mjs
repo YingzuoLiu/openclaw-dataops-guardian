@@ -2,12 +2,19 @@ import { readFile, writeFile } from "node:fs/promises";
 
 import { GatewayClient } from "openclaw/plugin-sdk/gateway-runtime";
 
-import { GatewayIncidentClient } from "../dist/alertmanager/http-bridge/gateway-incident-client.js";
+import {
+  GatewayIncidentClient,
+  incidentSessionKey,
+} from "../dist/alertmanager/http-bridge/gateway-incident-client.js";
 import {
   createKubernetesDeploymentClient,
   resolveKubernetesToolConfig,
 } from "../dist/kubernetes/config.js";
 import {
+  ROLLBACK_FROM_REVISION_ANNOTATION,
+  ROLLBACK_KEY_HASH_ANNOTATION,
+  ROLLBACK_TEMPLATE_HASH_ANNOTATION,
+  ROLLBACK_TO_REVISION_ANNOTATION,
   templateSha256,
 } from "../dist/kubernetes/deployment-rollback.js";
 import { KubernetesDeploymentRollbackReconciler } from "../dist/kubernetes/deployment-rollback-reconciler.js";
@@ -18,7 +25,10 @@ import {
 } from "../dist/runtime/lobster-approval-payload.js";
 import { persistDeploymentRecoveryVerification } from "../dist/runtime/recovery-verification-entry.js";
 import { reduceAlertDelivery } from "../dist/state/incident-reducer.js";
-import { readIncidentStateV3 } from "../dist/state/incident-state.js";
+import {
+  createIncidentOccurrenceId,
+  readIncidentStateV3,
+} from "../dist/state/incident-state.js";
 import {
   recordMetricEvidence,
   recordRemediationProposal,
@@ -37,14 +47,27 @@ const NAMESPACE = process.env.GUARDIAN_STEP4_NAMESPACE ?? "guardian-step4";
 const DEPLOYMENT = process.env.GUARDIAN_STEP4_DEPLOYMENT ?? "payments-step4";
 const PROMETHEUS_QUERY =
   process.env.GUARDIAN_STEP4_PROMETHEUS_QUERY ??
-  'payment_success_rate{service="payments",environment="proof"}';
+  'max(payment_success_rate{service="payments",environment="proof"}) or vector(0)';
+const FINAL_DEMO = process.env.GUARDIAN_FINAL_DEMO === "1";
+const BRIDGE_URL = process.env.ALERTMANAGER_BRIDGE_URL;
+const BRIDGE_TOKEN = process.env.ALERTMANAGER_BRIDGE_TOKEN;
+const AMBIGUOUS_FILE =
+  process.env.OPENCLAW_KIND_RECOVERY_AMBIGUOUS_FILE ??
+  ".openclaw-proof/kind-prometheus-ambiguous.json";
 
 const command = process.argv[2];
 const COMMANDS = [
   "prepare",
+  "prepare-http",
+  "denied-approval",
+  "prepare-ambiguous",
+  "reconcile-ambiguous",
+  "off-target",
   "rollback",
   "replay-rollback",
   "reconcile",
+  "resolved-not-recovered",
+  "verify-negative-recovery",
   "verify-recovery",
   "replay-recovery",
   "show",
@@ -64,12 +87,63 @@ function assert(condition, message) {
   if (!condition) throw new Error(`assertion failed: ${message}`);
 }
 
+function assertPolicyBlock(invocation, expectedReason, label) {
+  assert(
+    invocation?.ok === false &&
+      invocation.error?.code === "forbidden" &&
+      typeof invocation.error.message === "string" &&
+      invocation.error.message.includes(expectedReason),
+    `${label} was not blocked by the expected policy gate: ${JSON.stringify(invocation)}`,
+  );
+}
+
+function deploymentMutationFingerprint(deployment) {
+  const template = deployment.spec?.template;
+  assert(template, "Deployment PodTemplate is missing");
+  const annotations = deployment.metadata?.annotations ?? {};
+  return {
+    generation: deployment.metadata?.generation ?? null,
+    templateSha256: templateSha256(template),
+    rollbackAudit: {
+      keyHash: annotations[ROLLBACK_KEY_HASH_ANNOTATION] ?? null,
+      fromRevision: annotations[ROLLBACK_FROM_REVISION_ANNOTATION] ?? null,
+      toRevision: annotations[ROLLBACK_TO_REVISION_ANNOTATION] ?? null,
+      templateSha256:
+        annotations[ROLLBACK_TEMPLATE_HASH_ANNOTATION] ?? null,
+    },
+  };
+}
+
+function mutationFingerprintMatches(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function requireFinalBridge() {
+  if (!FINAL_DEMO || !BRIDGE_URL || !BRIDGE_TOKEN) {
+    throw new Error(
+      "final HTTP proof requires GUARDIAN_FINAL_DEMO=1, ALERTMANAGER_BRIDGE_URL, and ALERTMANAGER_BRIDGE_TOKEN",
+    );
+  }
+}
+
 async function readResume() {
   return JSON.parse(await readFile(RESUME_FILE, "utf8"));
 }
 
 async function writeResume(value) {
   await writeFile(RESUME_FILE, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function readAmbiguous() {
+  return JSON.parse(await readFile(AMBIGUOUS_FILE, "utf8"));
+}
+
+async function writeAmbiguous(value) {
+  await writeFile(
+    AMBIGUOUS_FILE,
+    `${JSON.stringify(value, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 let resolveReady;
@@ -83,7 +157,7 @@ const client = new GatewayClient({
   token: GATEWAY_TOKEN,
   clientName: "gateway-client",
   clientDisplayName: "dataops-guardian-kind-prometheus-recovery",
-  clientVersion: "2026.6.9",
+  clientVersion: "2026.6.34",
   platform: process.platform,
   mode: "backend",
   requestTimeoutMs: 20_000,
@@ -106,22 +180,27 @@ async function readState(sessionKey = SESSION_KEY) {
   return decoded.state;
 }
 
-async function requestLobsterApproval(occurrenceId) {
+async function requestLobsterApproval(sessionKey, occurrenceId, approve = true) {
   const run = await client.request(
     "tools.invoke",
-    buildLobsterApprovalRunRequest(SESSION_KEY, occurrenceId),
+    buildLobsterApprovalRunRequest(sessionKey, occurrenceId),
   );
   const details = run.output?.details;
   const resumeToken = details?.requiresApproval?.resumeToken;
   assert(run.ok === true && details?.status === "needs_approval" && resumeToken,
     `Lobster did not pause for approval: ${JSON.stringify(run)}`);
-  const resumed = await client.request(
-    "tools.invoke",
-    buildLobsterApprovalResumeRequest(SESSION_KEY, resumeToken),
+  const resumeRequest = buildLobsterApprovalResumeRequest(
+    sessionKey,
+    resumeToken,
   );
-  assert(resumed.ok === true && resumed.output?.details?.status === "ok",
-    `Lobster approval did not resume: ${JSON.stringify(resumed)}`);
-  return { approved: true, workflowStatus: "ok" };
+  resumeRequest.args.approve = approve;
+  const resumed = await client.request("tools.invoke", resumeRequest);
+  const expectedStatus = approve ? "ok" : "cancelled";
+  assert(
+    resumed.ok === true && resumed.output?.details?.status === expectedStatus,
+    `Lobster approval did not resume as ${expectedStatus}: ${JSON.stringify(resumed)}`,
+  );
+  return { approved: approve, workflowStatus: expectedStatus };
 }
 
 async function readDeployment(kubernetesConfig) {
@@ -165,14 +244,207 @@ async function discoverTarget(kubernetesConfig) {
   };
 }
 
-async function queryPrometheus() {
+async function invokeTool(sessionKey, name, args) {
+  const invocation = await client.request("tools.invoke", {
+    name,
+    args,
+    sessionKey,
+  });
+  assert(
+    invocation.ok === true,
+    `${name} failed: ${JSON.stringify(invocation)}`,
+  );
+  return invocation.output?.details;
+}
+
+async function queryPrometheus(sessionKey = SESSION_KEY) {
   const invocation = await client.request("tools.invoke", {
     name: "guardian_query_prometheus",
     args: { query: PROMETHEUS_QUERY },
-    sessionKey: SESSION_KEY,
+    sessionKey,
   });
   assert(invocation.ok === true, `Prometheus tool failed: ${JSON.stringify(invocation)}`);
   return invocation.output?.details;
+}
+
+function webhookPayload({ fingerprint, startsAt, status = "firing" }) {
+  const resolved = status === "resolved";
+  return {
+    version: "4",
+    groupKey: '{}:{alertname="PaymentSuccessRateLow"}',
+    truncatedAlerts: 0,
+    status,
+    receiver: "guardian-final-proof",
+    groupLabels: { alertname: "PaymentSuccessRateLow" },
+    commonLabels: {},
+    commonAnnotations: {},
+    externalURL: "http://alertmanager.invalid",
+    alerts: [
+      {
+        status,
+        labels: {
+          alertname: "PaymentSuccessRateLow",
+          namespace: NAMESPACE,
+          deployment: DEPLOYMENT,
+        },
+        annotations: { summary: "Payments are unhealthy." },
+        startsAt,
+        endsAt: resolved ? now() : new Date(Date.now() + 300_000).toISOString(),
+        generatorURL: "http://prometheus.invalid/graph",
+        fingerprint,
+      },
+    ],
+  };
+}
+
+async function postWebhook(payload, { authorized = true } = {}) {
+  requireFinalBridge();
+  const response = await fetch(`${BRIDGE_URL}/v1/alertmanager/webhook`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      ...(authorized ? { authorization: `Bearer ${BRIDGE_TOKEN}` } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  let body;
+  try {
+    body = await response.json();
+  } catch {
+    body = undefined;
+  }
+  return { status: response.status, body };
+}
+
+async function createHttpIncident(prefix, { proveIngress = false } = {}) {
+  requireFinalBridge();
+  const startsAt = new Date(Date.now() - 60_000).toISOString();
+  const fingerprint = `kind-final-${prefix}`;
+  const payload = webhookPayload({ fingerprint, startsAt });
+  const occurrenceId = createIncidentOccurrenceId(fingerprint, startsAt);
+  const sessionKey = incidentSessionKey(occurrenceId);
+
+  if (proveIngress) {
+    const unauthorized = await postWebhook(payload, { authorized: false });
+    assert(
+      unauthorized.status === 401,
+      `missing bridge token expected 401, got ${unauthorized.status}`,
+    );
+    assert(
+      (await incidentStore.describeIncidentState(sessionKey)) === undefined,
+      "unauthorized webhook created incident state",
+    );
+  }
+
+  const created = await postWebhook(payload);
+  assert(
+    created.status === 200 && created.body?.results?.[0]?.disposition === "created",
+    `authorized webhook did not create an incident: ${JSON.stringify(created)}`,
+  );
+  assert(
+    created.body.results[0].occurrenceId === occurrenceId,
+    "bridge occurrenceId did not match canonical occurrence identity",
+  );
+
+  if (proveIngress) {
+    const duplicate = await postWebhook(payload);
+    assert(
+      duplicate.status === 200 &&
+        duplicate.body?.results?.[0]?.disposition === "duplicate",
+      `replayed webhook was not deduplicated: ${JSON.stringify(duplicate)}`,
+    );
+  }
+
+  const state = await readState(sessionKey);
+  assert(
+    state.evidence.length === 0,
+    "Alertmanager webhook was incorrectly treated as metric evidence",
+  );
+  return { sessionKey, state, fingerprint, startsAt };
+}
+
+async function collectEvidenceAndPropose(sessionKey, initialState) {
+  let sample;
+  const deadline = Date.now() + 20_000;
+  do {
+    sample = await queryPrometheus(sessionKey);
+    if (Date.parse(sample?.observedAt) >= Date.parse(initialState.updatedAt)) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < deadline);
+  assert(
+    sample?.currentValue === 0.7,
+    `expected degraded metric 0.7, got ${JSON.stringify(sample)}`,
+  );
+  assert(
+    Date.parse(sample.observedAt) >= Date.parse(initialState.updatedAt),
+    "Prometheus evidence timestamp did not catch up to HTTP ingress",
+  );
+
+  const metric = await invokeTool(
+    sessionKey,
+    "guardian_inspect_metric_snapshot",
+    {
+      alertId: initialState.alertId,
+      metric: "payment_success_rate",
+      currentValue: sample.currentValue,
+      baselineValue: 1,
+      source: `prometheus:${sample.query}`,
+    },
+  );
+  assert(
+    metric?.classification === "critical",
+    `metric was not critical: ${JSON.stringify(metric)}`,
+  );
+  let state = recordMetricEvidence(initialState, metric, sample.observedAt);
+  await incidentStore.persistIncidentState(sessionKey, state);
+
+  const proposal = await invokeTool(
+    sessionKey,
+    "guardian_propose_remediation",
+    {
+      alertId: metric.alertId,
+      metric: metric.metric,
+      classification: metric.classification,
+    },
+  );
+  state = recordRemediationProposal(state, proposal, now());
+  await incidentStore.persistIncidentState(sessionKey, state);
+  assert(
+    state.stage === "approval" && state.evidenceValidation.status === "passed",
+    `Gateway Tool evidence did not reach approval: ${state.stage}`,
+  );
+  return { state, sample, metric, proposal };
+}
+
+function buildIdempotencyKey(state, target, suffix = "attempt-1") {
+  return (
+    `guardian:k8s-rollback:v1:${state.occurrenceId}:${target.deploymentUid}:` +
+    `${target.fromRevision}:${target.toRevision}:${suffix}`
+  );
+}
+
+async function authorizeIncident({
+  sessionKey,
+  state,
+  target,
+  approve,
+  suffix,
+}) {
+  const idempotencyKey = buildIdempotencyKey(state, target, suffix);
+  const authorized = await authorizeRemediationWithLobster({
+    sessionKey,
+    approvalState: state,
+    idempotencyKey,
+    target,
+    decidedAt: now(),
+    startedAt: now(),
+    writer: incidentStore,
+    requestApproval: () =>
+      requestLobsterApproval(sessionKey, state.occurrenceId, approve),
+  });
+  return { idempotencyKey, authorized };
 }
 
 async function prepare(rawKubernetesConfig) {
@@ -220,7 +492,8 @@ async function prepare(rawKubernetesConfig) {
     decidedAt: now(),
     startedAt: now(),
     writer: incidentStore,
-    requestApproval: () => requestLobsterApproval(state.occurrenceId),
+    requestApproval: () =>
+      requestLobsterApproval(SESSION_KEY, state.occurrenceId),
   });
   assert(authorized.decision === "started", `rollback was not authorized: ${authorized.decision}`);
   await writeResume({ sessionKey: SESSION_KEY, idempotencyKey, target });
@@ -236,6 +509,256 @@ async function prepare(rawKubernetesConfig) {
   })}\n`);
 }
 
+async function prepareHttp(rawKubernetesConfig) {
+  const kubernetesConfig = resolveKubernetesToolConfig({
+    kubernetes: rawKubernetesConfig,
+  });
+  const target = await discoverTarget(kubernetesConfig);
+  const ingress = await createHttpIncident("positive", { proveIngress: true });
+  const evidence = await collectEvidenceAndPropose(
+    ingress.sessionKey,
+    ingress.state,
+  );
+  const { idempotencyKey, authorized } = await authorizeIncident({
+    sessionKey: ingress.sessionKey,
+    state: evidence.state,
+    target,
+    approve: true,
+    suffix: "positive-attempt-1",
+  });
+  assert(
+    authorized.decision === "started",
+    `HTTP-ingressed rollback was not authorized: ${authorized.decision}`,
+  );
+  await writeResume({
+    sessionKey: ingress.sessionKey,
+    idempotencyKey,
+    target,
+    ingress: {
+      fingerprint: ingress.fingerprint,
+      startsAt: ingress.startsAt,
+    },
+  });
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "prepare-http",
+      unauthorizedStatus: 401,
+      authorizedDisposition: "created",
+      replayDisposition: "duplicate",
+      webhookEvidenceCount: ingress.state.evidence.length,
+      degradedMetric: evidence.sample.currentValue,
+      classification: evidence.metric.classification,
+      evidenceTools: [
+        "guardian_query_prometheus",
+        "guardian_inspect_metric_snapshot",
+        "guardian_propose_remediation",
+      ],
+      approvalEntry: "authorizeRemediationWithLobster",
+      workflowStatus: authorized.workflowStatus,
+      stage: authorized.state.stage,
+      attemptStatus: authorized.state.remediationAttempts.at(-1)?.status,
+    })}\n`,
+  );
+}
+
+async function deniedApproval(rawKubernetesConfig) {
+  const kubernetesConfig = resolveKubernetesToolConfig({
+    kubernetes: rawKubernetesConfig,
+  });
+  const target = await discoverTarget(kubernetesConfig);
+  const before = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  const ingress = await createHttpIncident("denied");
+  const evidence = await collectEvidenceAndPropose(
+    ingress.sessionKey,
+    ingress.state,
+  );
+  const { idempotencyKey, authorized } = await authorizeIncident({
+    sessionKey: ingress.sessionKey,
+    state: evidence.state,
+    target,
+    approve: false,
+    suffix: "denied-attempt-1",
+  });
+  assert(
+    authorized.decision === "denied" &&
+      authorized.workflowStatus === "cancelled" &&
+      authorized.state.stage === "blocked" &&
+      authorized.state.approvalStatus === "denied" &&
+      authorized.state.remediationAttempts.length === 0,
+    `Lobster denial was not durably blocked: ${JSON.stringify(authorized)}`,
+  );
+  const invocation = await client.request("tools.invoke", {
+    name: "guardian_rollback_deployment",
+    args: { idempotencyKey, target },
+    sessionKey: ingress.sessionKey,
+  });
+  assertPolicyBlock(
+    invocation,
+    "requires an approved incident",
+    "denied incident rollback",
+  );
+  const after = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  assert(
+    mutationFingerprintMatches(before, after),
+    "denied approval changed the Deployment",
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "denied-approval",
+      workflowStatus: authorized.workflowStatus,
+      approvalStatus: authorized.state.approvalStatus,
+      stage: authorized.state.stage,
+      rollbackBlocked: true,
+      blockedBy: "approval_gate",
+      mutationDispatchCount: 0,
+      generationUnchanged: true,
+      mutationFingerprintUnchanged: true,
+    })}\n`,
+  );
+}
+
+async function prepareAmbiguous(rawKubernetesConfig) {
+  const kubernetesConfig = resolveKubernetesToolConfig({
+    kubernetes: rawKubernetesConfig,
+  });
+  const target = await discoverTarget(kubernetesConfig);
+  const before = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  const ingress = await createHttpIncident("ambiguous");
+  const evidence = await collectEvidenceAndPropose(
+    ingress.sessionKey,
+    ingress.state,
+  );
+  const { idempotencyKey, authorized } = await authorizeIncident({
+    sessionKey: ingress.sessionKey,
+    state: evidence.state,
+    target,
+    approve: true,
+    suffix: "ambiguous-attempt-1",
+  });
+  assert(
+    authorized.decision === "started" &&
+      authorized.state.remediationAttempts.at(-1)?.status === "running",
+    "ambiguous fixture did not persist a running attempt",
+  );
+  await writeAmbiguous({
+    sessionKey: ingress.sessionKey,
+    idempotencyKey,
+    target,
+    mutationFingerprint: before,
+  });
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "prepare-ambiguous",
+      attemptStatus: "running",
+      mutationDispatchCount: 0,
+    })}\n`,
+  );
+}
+
+async function reconcileAmbiguous(rawKubernetesConfig) {
+  const record = await readAmbiguous();
+  const kubernetesConfig = resolveKubernetesToolConfig({
+    kubernetes: rawKubernetesConfig,
+  });
+  const state = await readState(record.sessionKey);
+  const result = await reconcileIncidentOnRestart({
+    state,
+    reconciler: new KubernetesDeploymentRollbackReconciler(kubernetesConfig),
+    reconciledAt: now(),
+  });
+  assert(
+    result.decision === "manual_review" &&
+      result.externalOutcome === "unknown" &&
+      result.state.stage === "blocked",
+    `unmutated attempt did not fail closed to manual review: ${JSON.stringify(result)}`,
+  );
+  await incidentStore.persistIncidentState(record.sessionKey, result.state);
+  const after = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  assert(
+    mutationFingerprintMatches(record.mutationFingerprint, after),
+    "ambiguous reconciliation changed the Deployment",
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "reconcile-ambiguous",
+      decision: result.decision,
+      externalOutcome: result.externalOutcome,
+      stage: result.state.stage,
+      mutationDispatchCount: 0,
+      generationUnchanged: true,
+      mutationFingerprintUnchanged: true,
+    })}\n`,
+  );
+}
+
+async function offTarget(rawKubernetesConfig) {
+  const kubernetesConfig = resolveKubernetesToolConfig({
+    kubernetes: rawKubernetesConfig,
+  });
+  const allowedTarget = await discoverTarget(kubernetesConfig);
+  const deniedTarget = {
+    ...allowedTarget,
+    namespace: "default",
+    deployment: "not-allowlisted",
+  };
+  const before = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  const ingress = await createHttpIncident("off-target");
+  const evidence = await collectEvidenceAndPropose(
+    ingress.sessionKey,
+    ingress.state,
+  );
+  const { idempotencyKey, authorized } = await authorizeIncident({
+    sessionKey: ingress.sessionKey,
+    state: evidence.state,
+    target: deniedTarget,
+    approve: true,
+    suffix: "off-target-attempt-1",
+  });
+  assert(authorized.decision === "started", "off-target fixture was not approved");
+  const invocation = await client.request("tools.invoke", {
+    name: "guardian_rollback_deployment",
+    args: { idempotencyKey, target: deniedTarget },
+    sessionKey: ingress.sessionKey,
+  });
+  assertPolicyBlock(
+    invocation,
+    "outside the administrator allowlist",
+    "off-target rollback",
+  );
+  const after = deploymentMutationFingerprint(
+    await readDeployment(kubernetesConfig),
+  );
+  assert(
+    mutationFingerprintMatches(before, after),
+    "off-target call changed the allowlisted Deployment",
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "off-target",
+      blocked: true,
+      blockedBy: "allowlist_gate",
+      mutationDispatchCount: 0,
+      generationUnchanged: true,
+      mutationFingerprintUnchanged: true,
+    })}\n`,
+  );
+}
+
 async function invokeRollback(record) {
   return client.request("tools.invoke", {
     name: "guardian_rollback_deployment",
@@ -249,37 +772,60 @@ async function rollback(rawKubernetesConfig) {
   const config = resolveKubernetesToolConfig({ kubernetes: rawKubernetesConfig });
   const before = await readDeployment(config);
   const invocation = await invokeRollback(record);
-  assert(invocation.ok === true && invocation.output?.details?.decision === "rolled_back",
+  const details = invocation.output?.details;
+  assert(invocation.ok === true && details?.decision === "rolled_back",
     `rollback failed: ${JSON.stringify(invocation)}`);
   const after = await readDeployment(config);
+  const generationBefore = before.metadata?.generation;
+  const generationAfter = after.metadata?.generation;
+  const resourceVersionBefore = before.metadata?.resourceVersion;
+  const resourceVersionAfter = after.metadata?.resourceVersion;
+  assert(
+    Number.isInteger(generationBefore) &&
+      generationAfter === generationBefore + 1 &&
+      typeof resourceVersionBefore === "string" &&
+      typeof resourceVersionAfter === "string" &&
+      resourceVersionAfter !== resourceVersionBefore &&
+      details.patched === true &&
+      details.templateSha256 === record.target.toTemplateSha256 &&
+      templateSha256(after.spec.template) === record.target.toTemplateSha256,
+    "rolled_back decision did not produce the expected Deployment mutation",
+  );
   process.stdout.write(`${JSON.stringify({
     ok: true,
     command: "rollback",
-    decision: invocation.output.details.decision,
-    generationBefore: before.metadata?.generation ?? null,
-    generationAfter: after.metadata?.generation ?? null,
-    resourceVersionBefore: before.metadata?.resourceVersion ?? null,
-    resourceVersionAfter: after.metadata?.resourceVersion ?? null,
+    decision: details.decision,
+    patched: details.patched,
+    mutationDispatchCount: 1,
+    generationChanged: true,
+    resourceVersionChanged: true,
+    templateMatchesTarget: true,
   })}\n`);
 }
 
 async function replayRollback(rawKubernetesConfig) {
   const record = await readResume();
   const config = resolveKubernetesToolConfig({ kubernetes: rawKubernetesConfig });
-  const before = await readDeployment(config);
+  const before = deploymentMutationFingerprint(await readDeployment(config));
   const invocation = await invokeRollback(record);
-  assert(invocation.ok === true && invocation.output?.details?.decision === "duplicate",
+  const details = invocation.output?.details;
+  assert(
+    invocation.ok === true &&
+      details?.decision === "duplicate" &&
+      details.patched === false,
     `rollback replay was not a duplicate: ${JSON.stringify(invocation)}`);
-  const after = await readDeployment(config);
-  assert(before.metadata?.generation === after.metadata?.generation, "rollback replay changed generation");
-  assert(before.metadata?.resourceVersion === after.metadata?.resourceVersion,
-    "rollback replay changed resourceVersion");
+  const after = deploymentMutationFingerprint(await readDeployment(config));
+  assert(
+    mutationFingerprintMatches(before, after),
+    "rollback replay changed the Deployment mutation fingerprint",
+  );
   process.stdout.write(`${JSON.stringify({
     ok: true,
     command: "replay-rollback",
     decision: "duplicate",
+    patched: false,
     generationUnchanged: true,
-    resourceVersionUnchanged: true,
+    mutationFingerprintUnchanged: true,
   })}\n`);
 }
 
@@ -307,6 +853,88 @@ async function reconcile(rawKubernetesConfig) {
     attemptStatus: attempt?.status,
     finishedAt: attempt?.finishedAt,
   })}\n`);
+}
+
+async function resolvedNotRecovered() {
+  const record = await readResume();
+  assert(record.ingress, "final ingress metadata is missing from the resume record");
+  const response = await postWebhook(
+    webhookPayload({
+      fingerprint: record.ingress.fingerprint,
+      startsAt: record.ingress.startsAt,
+      status: "resolved",
+    }),
+  );
+  assert(
+    response.status === 200 &&
+      response.body?.results?.[0]?.disposition === "updated",
+    `resolved webhook was not applied: ${JSON.stringify(response)}`,
+  );
+  const state = await readState(record.sessionKey);
+  assert(state.alertStatus === "resolved", "resolved webhook did not update alertStatus");
+  assert(
+    state.stage === "recovery_check",
+    `resolved webhook incorrectly changed recovery stage to ${state.stage}`,
+  );
+  assert(
+    !state.evidence.some(
+      (entry) => entry.source === "guardian_deployment_prometheus_recovery",
+    ),
+    "resolved webhook fabricated recovery evidence",
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "resolved-not-recovered",
+      alertStatus: state.alertStatus,
+      incidentStage: state.stage,
+      recoveryEvidencePresent: false,
+      incidentCompleted: false,
+    })}\n`,
+  );
+}
+
+async function verifyNegativeRecovery() {
+  const record = await readResume();
+  const state = await readState(record.sessionKey);
+  const attempt = state.remediationAttempts.at(-1);
+  assert(
+    attempt?.idempotencyKey === record.idempotencyKey &&
+      attempt.status === "succeeded" &&
+      attempt.finishedAt,
+    "negative recovery check requires the latest succeeded attempt",
+  );
+  const details = await invokeTool(
+    record.sessionKey,
+    "guardian_verify_deployment_recovery",
+    {
+      idempotencyKey: record.idempotencyKey,
+      target: record.target,
+      notBefore: attempt.finishedAt,
+    },
+  );
+  assert(
+    details?.decision === "not_recovered" &&
+      details.deployment?.issues?.includes("desired_replicas_not_positive"),
+    `scale-to-zero did not fail dual recovery: ${JSON.stringify(details)}`,
+  );
+  const unchanged = await readState(record.sessionKey);
+  assert(
+    unchanged.stage === "recovery_check",
+    "read-only negative recovery observation completed or advanced the incident",
+  );
+  process.stdout.write(
+    `${JSON.stringify({
+      ok: true,
+      command: "verify-negative-recovery",
+      decision: details.decision,
+      deploymentHealthy: details.deployment.healthy,
+      deploymentIssues: details.deployment.issues,
+      incidentStage: unchanged.stage,
+      incidentCompleted: false,
+      checkedAt: details.checkedAt,
+    })}\n`,
+  );
 }
 
 async function verifyRecovery() {
@@ -362,6 +990,7 @@ async function verifyRecovery() {
     prometheusObservedAt: details.prometheus.observedAt,
     incidentStage: completed.stage,
     evidenceSource: completed.evidence.at(-1)?.source,
+    completionReadbackConfirmed: completed.stage === "completed",
   })}\n`);
 }
 
@@ -380,17 +1009,23 @@ async function replayRecovery() {
     },
     sessionKey: record.sessionKey,
   });
-  assert(invocation.ok !== true, "completed incident allowed a second recovery verification");
+  assertPolicyBlock(
+    invocation,
+    "requires stage=recovery_check (current stage: completed)",
+    "completed incident recovery replay",
+  );
   process.stdout.write(`${JSON.stringify({
     ok: true,
     command: "replay-recovery",
     blocked: true,
+    blockedBy: "completed_stage_gate",
     incidentStage: state.stage,
   })}\n`);
 }
 
 async function show() {
-  const state = await readState();
+  const record = await readResume().catch(() => undefined);
+  const state = await readState(record?.sessionKey ?? SESSION_KEY);
   process.stdout.write(`${JSON.stringify({ ok: true, command: "show", state })}\n`);
 }
 
@@ -409,9 +1044,16 @@ async function run() {
     process.env.GUARDIAN_KUBERNETES_CONFIG_JSON ?? "{}",
   );
   if (command === "prepare") await prepare(rawKubernetesConfig);
+  else if (command === "prepare-http") await prepareHttp(rawKubernetesConfig);
+  else if (command === "denied-approval") await deniedApproval(rawKubernetesConfig);
+  else if (command === "prepare-ambiguous") await prepareAmbiguous(rawKubernetesConfig);
+  else if (command === "reconcile-ambiguous") await reconcileAmbiguous(rawKubernetesConfig);
+  else if (command === "off-target") await offTarget(rawKubernetesConfig);
   else if (command === "rollback") await rollback(rawKubernetesConfig);
   else if (command === "replay-rollback") await replayRollback(rawKubernetesConfig);
   else if (command === "reconcile") await reconcile(rawKubernetesConfig);
+  else if (command === "resolved-not-recovered") await resolvedNotRecovered();
+  else if (command === "verify-negative-recovery") await verifyNegativeRecovery();
   else if (command === "verify-recovery") await verifyRecovery();
   else if (command === "replay-recovery") await replayRecovery();
   else await show();

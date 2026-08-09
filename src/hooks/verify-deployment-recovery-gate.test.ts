@@ -124,4 +124,43 @@ describe("buildVerifyDeploymentRecoveryToolGateDecision", () => {
       })?.blockReason,
     ).toContain("recovery policy is missing");
   });
+
+  it("blocks an older succeeded attempt when a newer attempt is current", () => {
+    const first = recoveryState();
+    const secondTarget = { ...target, fromRevision: 3, toRevision: 2 };
+    const second = beginRemediationAttempt(
+      { ...first, stage: "remediation" },
+      {
+        idempotencyKey: "attempt-2",
+        target: secondTarget,
+        startedAt: "2026-08-07T00:00:02.000Z",
+      },
+    );
+    const current = finishRemediationAttempt(second.state, {
+      idempotencyKey: "attempt-2",
+      status: "succeeded",
+      finishedAt: "2026-08-07T00:00:03.000Z",
+      error: null,
+    }).state;
+
+    expect(
+      buildVerifyDeploymentRecoveryToolGateDecision({
+        incident: current,
+        toolParams: { idempotencyKey, target, notBefore: finishedAt },
+        rawConfig,
+      })?.blockReason,
+    ).toContain("latest succeeded remediation attempt");
+
+    expect(
+      buildVerifyDeploymentRecoveryToolGateDecision({
+        incident: current,
+        toolParams: {
+          idempotencyKey: "attempt-2",
+          target: secondTarget,
+          notBefore: "2026-08-07T00:00:03.000Z",
+        },
+        rawConfig,
+      }),
+    ).toBeUndefined();
+  });
 });

@@ -61,17 +61,17 @@ export function buildVerifyDeploymentRecoveryToolGateDecision(input: {
   const idempotencyKey = params?.idempotencyKey;
   const target = params?.target;
   const notBefore = params?.notBefore;
-  const matchingAttempt =
-    typeof idempotencyKey === "string"
-      ? state.remediationAttempts.find(
-          (attempt) => attempt.idempotencyKey === idempotencyKey,
-        )
-      : undefined;
-  if (!matchingAttempt || matchingAttempt.status !== "succeeded") {
+  const matchingAttempt = state.remediationAttempts.at(-1);
+  if (
+    typeof idempotencyKey !== "string" ||
+    !matchingAttempt ||
+    matchingAttempt.idempotencyKey !== idempotencyKey ||
+    matchingAttempt.status !== "succeeded"
+  ) {
     return {
       block: true,
       blockReason:
-        "guardian_verify_deployment_recovery idempotencyKey does not identify a succeeded remediation attempt",
+        "guardian_verify_deployment_recovery idempotencyKey does not identify the latest succeeded remediation attempt",
     };
   }
   if (!isRecord(target) || !jsonValuesEqual(matchingAttempt.target, target)) {

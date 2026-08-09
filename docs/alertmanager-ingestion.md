@@ -1,8 +1,11 @@
-# Alertmanager ingestion boundary
+# Alertmanager ingestion boundary (Step 2a)
 
-Guardian now accepts untrusted Alertmanager webhook v4 payloads through a
-small, deterministic ingestion boundary. This step deliberately stops before
-HTTP serving, OpenClaw RPC dispatch, or Kubernetes access.
+Status: **implemented and proven**. Step 2b supplies its durable HTTP adapter,
+and Step 5 exercises the composed ingress path.
+
+Guardian accepts untrusted Alertmanager webhook v4 payloads through a small,
+deterministic ingestion boundary. This Step 2a component deliberately stops
+before HTTP serving, OpenClaw RPC dispatch, or Kubernetes access.
 
 ## Boundary
 
@@ -125,11 +128,11 @@ reducer's decisions into bridge-owned actions:
 
 A deferred checkpoint contains the exact canonical delivery, the occurrence
 whose running remediation blocks it, and a deterministic checkpoint ID. The
-planner performs no I/O. A future external bridge must durably write this
-checkpoint before acknowledging the webhook, then follow the restart
+planner performs no I/O. The Step 2b external bridge durably writes this
+checkpoint before acknowledging the webhook, then follows the restart
 reconciliation replay contract in `docs/incident-state-v3.md`.
 
-## Explicit exclusions
+## Step 2a exclusions
 
 This step does not add:
 
@@ -141,20 +144,20 @@ This step does not add:
 - Kubernetes reads or writes;
 - remediation execution.
 
-An HTTP receiver and durable checkpoint/route persistence are now
-implemented on top of this boundary, unchanged, by the external bridge in
+An HTTP receiver and durable checkpoint/route persistence are implemented on
+top of this boundary, unchanged, by the external bridge in
 [`docs/alertmanager-http-bridge.md`](alertmanager-http-bridge.md).
-Investigation dispatch, Kubernetes access, and remediation execution remain
-out of scope there too.
+Investigation dispatch, Kubernetes access, and remediation execution are not
+bridge responsibilities; later Guardian Tools and runtime entries provide
+those capabilities.
 
 ## Residual risks
 
-These are known gaps in this milestone's design, not implementation bugs.
-They are accepted for now because the excluded work above (HTTP receiver,
-durable checkpoint storage, remediation cancellation) is what would be
-needed to close them. Anyone building the external bridge on top of this
-boundary should read this section before assuming stronger guarantees than
-what is actually implemented.
+These are known scope bounds, not implementation bugs. Step 2b implements the
+HTTP receiver and durable checkpoint storage, but deliberately does not add
+orphan-resolution compensation, truncation re-fetch, or remediation
+cancellation. Read this section before assuming stronger guarantees than the
+composed ingestion and bridge path provides.
 
 - **Orphan-resolved deliveries have no durable replay channel.** If a
   `resolved` delivery is processed before its matching `firing` delivery —
@@ -205,7 +208,7 @@ what is actually implemented.
   `receivedAt` well after actual HTTP receipt (e.g. due to queuing), this
   can cause legitimate alerts to be fail-closed rejected rather than
   accepted. This is a safe failure mode (no bad state is written) but can
-  be operationally confusing; a future bridge should monitor
+  be operationally confusing; a production bridge should monitor
   `received_before_start` rejection rates as a clock-health signal.
 
 Run the unit suite and the deterministic proof with:

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROOF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PROOF_SCRIPT_DIR/guardian-proof-build.sh"
+
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$PWD/.openclaw-proof}"
 export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-guardian-vertical-slice-proof-local-only}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-19183}"
@@ -8,6 +11,7 @@ export OPENCLAW_VERTICAL_SESSION_KEY="${OPENCLAW_VERTICAL_SESSION_KEY:-agent:mai
 export OPENCLAW_VERTICAL_RESUME_FILE="${OPENCLAW_VERTICAL_RESUME_FILE:-$OPENCLAW_STATE_DIR/vertical-slice-script-resume.json}"
 export LOBSTER_STATE_DIR="${LOBSTER_STATE_DIR:-$OPENCLAW_STATE_DIR/lobster-state}"
 export GUARDIAN_MOCK_PROMETHEUS_PORT="${GUARDIAN_MOCK_PROMETHEUS_PORT:-19090}"
+LOBSTER_PLUGIN_DIR="${GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR:-$PWD/node_modules/@openclaw/lobster}"
 
 DECISION="${GUARDIAN_PROOF_DECISION:-approve}"
 if [[ "$DECISION" != "approve" && "$DECISION" != "deny" ]]; then
@@ -37,20 +41,44 @@ cleanup() {
 }
 trap cleanup EXIT
 
-npm run build
-./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
-./node_modules/.bin/openclaw plugins install --link "$PWD/node_modules/@openclaw/lobster" >/dev/null
-./node_modules/.bin/openclaw config set gateway.mode local >/dev/null
-./node_modules/.bin/openclaw config set gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
-./node_modules/.bin/openclaw config set tools.alsoAllow '["lobster"]' >/dev/null
+guardian_build_or_verify_prebuilt \
+  "$PWD/dist/state/incident-workflow.js" \
+  "$PWD/dist/state/incident-reducer.js" \
+  "$PWD/dist/state/incident-state.js"
+if [[ -z "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
+  ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+  ./node_modules/.bin/openclaw plugins install --link "$LOBSTER_PLUGIN_DIR" >/dev/null
+fi
+VERTICAL_BATCH_JSON="$(
+  node -e '
+    const [pluginDir, lobsterDir, gatewayPort, prometheusPort] = process.argv.slice(1);
+    const entries = pluginDir
+      ? [{ path: "plugins.load.paths", value: [pluginDir, lobsterDir] }]
+      : [];
+    entries.push(
+      { path: "plugins.entries.dataops-guardian.enabled", value: true },
+      { path: "plugins.entries.lobster.enabled", value: true },
+      { path: "gateway.mode", value: "local" },
+      { path: "gateway.port", value: Number(gatewayPort) },
+      { path: "tools.alsoAllow", value: ["lobster"] },
+      {
+        path: "plugins.entries.dataops-guardian.config.prometheusBaseUrl",
+        value: `http://127.0.0.1:${prometheusPort}`,
+      },
+      { path: "plugins.entries.dataops-guardian.config.prometheusTimeoutMs", value: 5000 },
+      { path: "plugins.entries.dataops-guardian.hooks.allowConversationAccess", value: true },
+      { path: "gateway.controlUi.dangerouslyDisableDeviceAuth", value: true },
+    );
+    process.stdout.write(JSON.stringify(entries));
+  ' \
+    "${GUARDIAN_PROOF_PLUGIN_DIR:-}" \
+    "$LOBSTER_PLUGIN_DIR" \
+    "$OPENCLAW_GATEWAY_PORT" \
+    "$GUARDIAN_MOCK_PROMETHEUS_PORT"
+)"
+printf '[vertical] configure\n' >&2
 ./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.config.prometheusBaseUrl \
-  "http://127.0.0.1:$GUARDIAN_MOCK_PROMETHEUS_PORT" >/dev/null
-./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.config.prometheusTimeoutMs 5000 >/dev/null
-./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.hooks.allowConversationAccess true >/dev/null
-./node_modules/.bin/openclaw config set gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
+  --batch-json "$VERTICAL_BATCH_JSON" >/dev/null
 
 node scripts/mock-prometheus-server.mjs \
   "$GUARDIAN_MOCK_PROMETHEUS_PORT" >"$OPENCLAW_STATE_DIR/mock-prometheus.log" 2>&1 &

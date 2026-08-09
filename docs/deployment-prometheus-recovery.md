@@ -2,6 +2,11 @@
 
 Status: **implemented and proven**. See [Sanitized proof summary](#sanitized-proof-summary-2026-08-08) below.
 
+This is the Step 4 component contract. The
+[Step 5 final safety proof](final-safety-proof.md) adds real HTTP ingress plus
+denial, ambiguous restart, RBAC/off-target, resolved-webhook, scale-to-zero,
+sanitization, and cleanup cases.
+
 Step 4 closes the successful rollback path from `recovery_check` to
 `completed`. A successful check requires two independent live observations:
 
@@ -91,6 +96,12 @@ or other indeterminate observation throws and leaves the durable incident at
 `persistDeploymentRecoveryVerification`, which rechecks the attempt/result
 binding before writing the next `IncidentState`.
 
+The disposable proof configures
+`max(payment_success_rate{service="payments",environment="proof"}) or vector(0)`.
+That administrator-owned expression still yields exactly one sample when the
+workload is absent, so the live scale-to-zero fault is evaluated as unhealthy
+rather than becoming an empty-vector transport error.
+
 ## Real proof
 
 ```bash
@@ -114,9 +125,9 @@ The proof creates an isolated cluster and:
    reconciliation settles it to `recovery_check`;
 7. waits for the Deployment to become available and Prometheus to scrape a
    post-remediation value of `1.0`;
-8. invokes the gated recovery Tool, persists `completed`, blocks a replay after
-   completion, restarts the Gateway again, and confirms the completed state
-   survives;
+8. invokes the gated recovery Tool, persists `completed`, independently reads
+   back the exact completed state, restarts the Gateway, and only then proves
+   the recovery replay is blocked and the completed state still exists;
 9. removes the cluster, scoped token, kubeconfig, Gateway state, and port
    forward.
 

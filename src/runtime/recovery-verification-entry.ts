@@ -21,6 +21,14 @@ export type RecoveryStateStore = {
   ): Promise<void>;
 };
 
+function isTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.includes("T") &&
+    Number.isFinite(Date.parse(value))
+  );
+}
+
 /**
  * Production persistence boundary for a recovery tool result. Trusted
  * Gateway/operator code is the only expected caller: it must supply the
@@ -57,15 +65,19 @@ export async function persistDeploymentRecoveryVerification(input: {
   if (state.stage !== "recovery_check") {
     throw new Error("recovery verification requires stage=recovery_check");
   }
-  const attempt = state.remediationAttempts.find(
-    (candidate) => candidate.idempotencyKey === input.idempotencyKey,
-  );
+  if (state.approvalStatus !== "approved") {
+    throw new Error("recovery verification requires approvalStatus=approved");
+  }
+  const attempt = state.remediationAttempts.at(-1);
   if (
     !attempt ||
+    attempt.idempotencyKey !== input.idempotencyKey ||
     attempt.status !== "succeeded" ||
     attempt.finishedAt === null
   ) {
-    throw new Error("recovery verification requires a succeeded remediation attempt");
+    throw new Error(
+      "recovery verification requires the latest succeeded remediation attempt",
+    );
   }
   if (
     !jsonValuesEqual(attempt.target, input.target) ||
@@ -76,8 +88,17 @@ export async function persistDeploymentRecoveryVerification(input: {
   if (input.result.notBefore !== attempt.finishedAt) {
     throw new Error("recovery verification notBefore binding mismatch");
   }
-  if (Date.parse(input.result.checkedAt) < Date.parse(attempt.finishedAt)) {
+  if (!isTimestamp(input.result.checkedAt)) {
+    throw new Error(
+      "recovery verification checkedAt must be a valid timestamp",
+    );
+  }
+  const checkedAtMs = Date.parse(input.result.checkedAt);
+  if (checkedAtMs < Date.parse(attempt.finishedAt)) {
     throw new Error("recovery verification predates remediation completion");
+  }
+  if (checkedAtMs < Date.parse(state.updatedAt)) {
+    throw new Error("recovery verification result is stale");
   }
   const recovered =
     input.result.deployment.healthy && input.result.prometheus.healthy;
@@ -95,5 +116,26 @@ export async function persistDeploymentRecoveryVerification(input: {
     source: "guardian_deployment_prometheus_recovery",
   });
   await input.store.persistIncidentState(input.sessionKey, nextState);
-  return nextState;
+
+  // A successful persistence RPC response is not, by itself, enough to
+  // release a terminal recovery decision. Read the session extension back
+  // through the same public store boundary and require the complete state to
+  // match. This keeps a missing/stale Gateway projection from being reported
+  // later as a replay failure after the caller has already treated the
+  // incident as completed.
+  const persistedRaw = await input.store.describeIncidentState(
+    input.sessionKey,
+  );
+  const persisted = readIncidentStateV3(persistedRaw);
+  if (!persisted.ok) {
+    throw new Error(
+      `recovery verification cannot confirm persisted state: ${persisted.error}`,
+    );
+  }
+  if (!jsonValuesEqual(persisted.state, nextState)) {
+    throw new Error(
+      "recovery verification persisted state readback mismatch",
+    );
+  }
+  return persisted.state;
 }

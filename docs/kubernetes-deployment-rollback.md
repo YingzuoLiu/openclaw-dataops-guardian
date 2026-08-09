@@ -1,13 +1,18 @@
 # Kubernetes Deployment rollback (Step 3)
 
+Status: **implemented and proven**. The component proof below isolates the
+mutation boundary; the [Step 5 demo](final-safety-proof.md) adds HTTP ingress
+and the complete positive and negative safety matrix.
+
 Step 3 upgrades the Day 0 spike's fixed annotation patch into a real,
 allowlisted Kubernetes Deployment PodTemplate rollback inside the main
 `dataops-guardian` plugin, closed on both sides by durable `IncidentState`
 remediation attempts and Deployment audit annotations.
 
 This document covers the `guardian_rollback_deployment` tool, its security
-boundaries, and how to run the real kind proof. It does not cover Prometheus
-recovery verification or `completed` incidents -- that is Step 4.
+boundaries, and how to run the real kind proof. It stops at `recovery_check`;
+[Step 4](deployment-prometheus-recovery.md) covers dual recovery and
+`completed` incidents.
 
 ## What a "rollback" means here
 

@@ -90,8 +90,8 @@ Raw transcripts are retained as an Actions artifact rather than committed as
 
 ## Project decision
 
-This evaluation closes the evidence-gate MVP. Future infrastructure work such
-as Alertmanager ingestion, external-run watching, Kubernetes remediation, and
-production telemetry belongs in a later milestone. A future validator may add
-domain-specific evidence-to-conclusion checks, but that is explicitly outside
-the claim established here.
+This evaluation closed the evidence-gate MVP. Alertmanager ingestion and
+Kubernetes remediation were subsequently implemented in Steps 2-5; production
+telemetry and external-run watching remain outside the repository's claim. A
+future validator may add domain-specific evidence-to-conclusion checks, but
+that is explicitly outside the result established here.

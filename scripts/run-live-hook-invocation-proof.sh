@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROOF_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$PROOF_SCRIPT_DIR/guardian-proof-build.sh"
+
 export OPENCLAW_STATE_DIR="${OPENCLAW_STATE_DIR:-$PWD/.openclaw-live-hook-proof}"
 export OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN:-guardian-live-hook-proof-local-only}"
 export OPENCLAW_GATEWAY_PORT="${OPENCLAW_GATEWAY_PORT:-19184}"
@@ -36,21 +39,54 @@ mkdir -p "$OPENCLAW_STATE_DIR" "$OPENCLAW_WORKSPACE_DIR"
 : >"$MODEL_REQUESTS"
 : >"$GATEWAY_LOG"
 
-npm run build
-./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
-./node_modules/.bin/openclaw config set gateway.mode local >/dev/null
-./node_modules/.bin/openclaw config set gateway.port "$OPENCLAW_GATEWAY_PORT" >/dev/null
+guardian_build_or_verify_prebuilt
+if [[ -z "${GUARDIAN_PROOF_PLUGIN_DIR:-}" ]]; then
+  ./node_modules/.bin/openclaw plugins install --link "$PWD" >/dev/null
+fi
+LIVE_HOOK_BATCH_JSON="$(
+  node -e '
+    const [pluginDir, gatewayPort, modelPort] = process.argv.slice(1);
+    const entries = pluginDir
+      ? [
+          { path: "plugins.load.paths", value: [pluginDir] },
+          { path: "plugins.entries.dataops-guardian.enabled", value: true },
+        ]
+      : [{ path: "plugins.entries.dataops-guardian.enabled", value: true }];
+    entries.push(
+      { path: "gateway.mode", value: "local" },
+      { path: "gateway.port", value: Number(gatewayPort) },
+      { path: "gateway.controlUi.dangerouslyDisableDeviceAuth", value: true },
+      { path: "plugins.entries.dataops-guardian.hooks.allowConversationAccess", value: true },
+      { path: "plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns", value: true },
+      {
+        path: "models.providers.guardian-scripted",
+        value: {
+          baseUrl: `http://127.0.0.1:${modelPort}/v1`,
+          apiKey: "local-proof-key",
+          api: "openai-completions",
+          models: [{
+            id: "scripted-finalizer",
+            name: "Guardian Scripted Finalizer",
+            reasoning: false,
+            input: ["text"],
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            contextWindow: 128000,
+            contextTokens: 96000,
+            maxTokens: 4096,
+          }],
+        },
+      },
+      { path: "agents.defaults.model.primary", value: "guardian-scripted/scripted-finalizer" },
+    );
+    process.stdout.write(JSON.stringify(entries));
+  ' \
+    "${GUARDIAN_PROOF_PLUGIN_DIR:-}" \
+    "$OPENCLAW_GATEWAY_PORT" \
+    "$GUARDIAN_MOCK_MODEL_PORT"
+)"
+printf '[live-hook] configure\n' >&2
 ./node_modules/.bin/openclaw config set \
-  gateway.controlUi.dangerouslyDisableDeviceAuth true >/dev/null
-./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.hooks.allowConversationAccess true >/dev/null
-./node_modules/.bin/openclaw config set \
-  plugins.entries.dataops-guardian.config.enforceRequireToolsOnAgentRuns true >/dev/null
-./node_modules/.bin/openclaw config set models.providers.guardian-scripted \
-  "{\"baseUrl\":\"http://127.0.0.1:$GUARDIAN_MOCK_MODEL_PORT/v1\",\"apiKey\":\"local-proof-key\",\"api\":\"openai-completions\",\"models\":[{\"id\":\"scripted-finalizer\",\"name\":\"Guardian Scripted Finalizer\",\"reasoning\":false,\"input\":[\"text\"],\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0},\"contextWindow\":128000,\"contextTokens\":96000,\"maxTokens\":4096}]}" \
-  --strict-json --merge >/dev/null
-./node_modules/.bin/openclaw config set \
-  agents.defaults.model.primary guardian-scripted/scripted-finalizer >/dev/null
+  --batch-json "$LIVE_HOOK_BATCH_JSON" >/dev/null
 
 node scripts/mock-openai-finalizer.mjs \
   "$GUARDIAN_MOCK_MODEL_PORT" "$MODEL_REQUESTS" >"$MODEL_LOG" 2>&1 &
@@ -104,28 +140,17 @@ node scripts/live-hook-agent-rpc.mjs >"$RPC_RESULT"
 node --input-type=module - \
   "$GATEWAY_LOG" "$MODEL_REQUESTS" "$RPC_RESULT" "$AUDIT_LOG" "$PROOF_RESULT" <<'NODE'
 import { readFile, writeFile } from "node:fs/promises";
+import { extractGuardianAuditEvents } from "./scripts/gateway-audit-log.mjs";
 
 const [gatewayPath, requestsPath, rpcPath, auditPath, proofPath] =
   process.argv.slice(2);
 const gatewayLog = await readFile(gatewayPath, "utf8");
-const normalizedGatewayLog = gatewayLog.replaceAll('\\"', '"');
 const requestLines = (await readFile(requestsPath, "utf8"))
   .split("\n")
   .filter(Boolean);
 const requests = requestLines.map((line) => JSON.parse(line));
 const rpc = JSON.parse(await readFile(rpcPath, "utf8"));
-const auditEvents = normalizedGatewayLog
-  .split("\n")
-  .map((line) => {
-    const jsonStart = line.indexOf(
-      '{"schemaVersion":1,"component":"dataops-guardian"',
-    );
-    if (jsonStart < 0) {
-      return undefined;
-    }
-    return JSON.parse(line.slice(jsonStart));
-  })
-  .filter(Boolean);
+const auditEvents = extractGuardianAuditEvents(gatewayLog);
 
 const hasActivation = auditEvents
   .some(
