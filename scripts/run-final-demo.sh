@@ -29,7 +29,7 @@ cleanup() {
 }
 
 failed() {
-  local status=$?
+  local status="${1:-$?}"
   local log_file=""
   trap - ERR
   echo "demo failed during ${CURRENT_COMPONENT}" >&2
@@ -46,6 +46,21 @@ failed() {
     tail -n 120 "$log_file" >&2
   fi
   exit "$status"
+}
+
+run_component() {
+  local duration="$1"
+  local log_file="$2"
+  local status
+  shift 2
+
+  set +e
+  run_bounded "$duration" "$@" >"$log_file" 2>&1
+  status=$?
+  set -e
+  if ((status != 0)); then
+    failed "$status"
+  fi
 }
 
 trap failed ERR
@@ -71,12 +86,12 @@ GUARDIAN_FINAL_PROGRESS_FD=3 \
 
 CURRENT_COMPONENT="kind safety proof"
 progress "$CURRENT_COMPONENT"
-run_bounded 1800s env \
+run_component 1800s "$RUNTIME_DIR/kind.log" env \
   GUARDIAN_FINAL_DEMO=1 \
   GUARDIAN_FINAL_REPORT_PATH="$RUNTIME_DIR/kind.json" \
   GUARDIAN_FINAL_PROGRESS_FD=3 \
   bash scripts/run-kind-prometheus-recovery-proof.sh \
-  3>&2 >"$RUNTIME_DIR/kind.log" 2>&1
+  3>&2
 
 CURRENT_COMPONENT="sanitized summary"
 progress "$CURRENT_COMPONENT"

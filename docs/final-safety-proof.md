@@ -28,6 +28,11 @@ extensions and explicitly loads only the proof-owned Guardian and Lobster
 copies. This keeps the proof valid when WSL DrvFS presents a checkout's
 `node_modules` as world-writable. It aggregates:
 
+The runner also clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`,
+and `OPENCLAW_HOME` overrides before assigning its proof-owned state. A caller's
+normal OpenClaw profile therefore cannot override the acceptance boundary or be
+mutated by the proof.
+
 | Component | Required result |
 |---|---|
 | Plugin policy registration | no loader diagnostics and all typed hooks registered |

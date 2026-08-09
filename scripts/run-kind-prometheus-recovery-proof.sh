@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # Steps 4-5: real kind Deployment rollback plus Prometheus recovery proof.
 # Requires Docker, kind, kubectl, and network access to pull the pinned proof
@@ -15,6 +15,10 @@ PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
 # The proof loads Guardian and Lobster explicitly. Unrelated bundled extensions
 # are not part of the safety matrix and can appear world-writable on DrvFS.
 export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
+
+# Keep the live acceptance proof isolated from any caller-level OpenClaw
+# profile. OPENCLAW_STATE_DIR is assigned to the run-owned directory below.
+unset OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_HOME
 
 progress() {
   printf '[demo:kind] %s\n' "$1" >&"$PROGRESS_FD"

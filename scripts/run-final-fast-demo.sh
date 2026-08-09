@@ -18,6 +18,11 @@ PROGRESS_FD="${GUARDIAN_FINAL_PROGRESS_FD:-2}"
 # their package directories as world-writable, so do not discover them here.
 export OPENCLAW_DISABLE_BUNDLED_PLUGINS=1
 
+# A caller-level config/profile override takes precedence over the proof-owned
+# state directory and can redirect writes back into a real OpenClaw profile.
+# The acceptance proof must be hermetic and must never read or mutate it.
+unset OPENCLAW_CONFIG_PATH OPENCLAW_PROFILE OPENCLAW_HOME
+
 progress() {
   printf '[demo:fast] %s\n' "$1" >&"$PROGRESS_FD"
 }
@@ -39,14 +44,28 @@ cleanup() {
 }
 
 failed() {
-  local status=$?
+  local status="${1:-$?}"
   trap - ERR
-  echo "demo:fast failed during ${CURRENT_COMPONENT}" >&2
+  echo "demo:fast failed during ${CURRENT_COMPONENT} (exit ${status})" >&2
   if [[ -n "$CURRENT_LOG" && -s "$CURRENT_LOG" ]]; then
     echo "last component diagnostic lines:" >&2
     tail -n 120 "$CURRENT_LOG" >&2 || true
   fi
   exit "$status"
+}
+
+run_component() {
+  local duration="$1"
+  local status
+  shift
+
+  set +e
+  run_bounded "$duration" "$@" >"$CURRENT_LOG" 2>&1
+  status=$?
+  set -e
+  if ((status != 0)); then
+    failed "$status"
+  fi
 }
 
 trap failed ERR
@@ -96,35 +115,35 @@ progress "$CURRENT_COMPONENT"
 CURRENT_COMPONENT="policy registration"
 CURRENT_LOG="$RUNTIME_DIR/policy.log"
 progress "$CURRENT_COMPONENT"
-run_bounded 120s env \
+run_component 120s env \
   OPENCLAW_STATE_DIR="$RUNTIME_DIR/policy" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
-  bash scripts/run-policy-registration-proof.sh >"$CURRENT_LOG" 2>&1
+  bash scripts/run-policy-registration-proof.sh
 
 CURRENT_COMPONENT="live Agent hook"
 CURRENT_LOG="$RUNTIME_DIR/live-hook.log"
 progress "$CURRENT_COMPONENT"
-run_bounded 180s env \
+run_component 180s env \
   OPENCLAW_STATE_DIR="$RUNTIME_DIR/live-hook" \
   OPENCLAW_GATEWAY_PORT="$LIVE_GATEWAY_PORT" \
   GUARDIAN_MOCK_MODEL_PORT="$LIVE_MODEL_PORT" \
   OPENCLAW_WORKSPACE_DIR="$RUNTIME_DIR/live-hook-workspace" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
-  bash scripts/run-live-hook-invocation-proof.sh >"$CURRENT_LOG" 2>&1
+  bash scripts/run-live-hook-invocation-proof.sh
 
 CURRENT_COMPONENT="Alertmanager HTTP bridge"
 CURRENT_LOG="$RUNTIME_DIR/bridge.log"
 progress "$CURRENT_COMPONENT"
-run_bounded 420s env \
+run_component 420s env \
   OPENCLAW_GATEWAY_PORT="$BRIDGE_GATEWAY_PORT" \
   ALERTMANAGER_BRIDGE_PORT="$BRIDGE_HTTP_PORT" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
-  bash scripts/run-alertmanager-http-bridge-proof.sh >"$CURRENT_LOG" 2>&1
+  bash scripts/run-alertmanager-http-bridge-proof.sh
 
 CURRENT_COMPONENT="synthetic approval"
 CURRENT_LOG="$RUNTIME_DIR/approve.log"
 progress "$CURRENT_COMPONENT"
-run_bounded 300s env \
+run_component 300s env \
   OPENCLAW_STATE_DIR="$RUNTIME_DIR/approve" \
   OPENCLAW_GATEWAY_PORT="$APPROVE_GATEWAY_PORT" \
   GUARDIAN_MOCK_PROMETHEUS_PORT="$APPROVE_PROMETHEUS_PORT" \
@@ -134,12 +153,12 @@ run_bounded 300s env \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=approve \
-  bash scripts/run-vertical-slice-proof.sh >"$CURRENT_LOG" 2>&1
+  bash scripts/run-vertical-slice-proof.sh
 
 CURRENT_COMPONENT="synthetic denial"
 CURRENT_LOG="$RUNTIME_DIR/deny.log"
 progress "$CURRENT_COMPONENT"
-run_bounded 300s env \
+run_component 300s env \
   OPENCLAW_STATE_DIR="$RUNTIME_DIR/deny" \
   OPENCLAW_GATEWAY_PORT="$DENY_GATEWAY_PORT" \
   GUARDIAN_MOCK_PROMETHEUS_PORT="$DENY_PROMETHEUS_PORT" \
@@ -149,7 +168,7 @@ run_bounded 300s env \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=deny \
-  bash scripts/run-vertical-slice-proof.sh >"$CURRENT_LOG" 2>&1
+  bash scripts/run-vertical-slice-proof.sh
 
 CURRENT_COMPONENT="sanitized summary"
 CURRENT_LOG=""

@@ -142,7 +142,10 @@ cluster, paid API, or external model. Proof clients temporarily disable device
 authentication only inside their disposable local profiles and restore it on
 exit. The runner explicitly loads Guardian and Lobster while disabling discovery
 of unrelated bundled extensions, so a WSL checkout under `/mnt/c` does not fail
-on DrvFS world-writable modes. Never point a proof script at a normal Gateway
+on DrvFS world-writable modes. It also clears inherited `OPENCLAW_CONFIG_PATH`,
+`OPENCLAW_PROFILE`, and `OPENCLAW_HOME` overrides before assigning its
+proof-owned state directory, so an exported caller profile cannot redirect the
+run into normal OpenClaw state. Never point a proof script at a normal Gateway
 profile.
 
 To run the full release proof on Linux/WSL with a reachable Docker daemon,
