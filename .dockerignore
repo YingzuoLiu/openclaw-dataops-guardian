@@ -1,0 +1,33 @@
+**
+!.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.runtime.json
+!openclaw.plugin.json
+!LICENSE
+!src/
+!src/**
+src/**/*.test.ts
+!workflows/
+!workflows/incident-remediation.lobster
+!scripts/
+!scripts/build-runtime.mjs
+!scripts/remediation-step.mjs
+!container/
+!container/Dockerfile
+!container/entrypoint.sh
+!container/runtime-contract.mjs
+!container/package.json
+!container/package-lock.json
+!container/openclaw.container.example.json
+
+# These stay excluded even if a future allowlisted directory grows a local
+# credential-shaped file. Release builds must never send them to the daemon.
+**/.env
+**/.env.*
+**/.npmrc
+**/kubeconfig
+**/*.kubeconfig
+**/*.key
+**/*.pem

@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
 
 permissions:
@@ -43,6 +45,272 @@ jobs:
 
       - name: Build and test
         run: npm run check
+
+  container-contract:
+    name: OCI image contract (host Node 24.15.0 / image Node 24.16.0 / linux-amd64)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      DOCKER_BUILDKIT: "1"
+
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Use Node.js 24.15.0
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Run source-bound dual-role image proof
+        shell: bash
+        env:
+          GUARDIAN_PROOF_SOURCE_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          report_dir="$RUNNER_TEMP/guardian-container-proof"
+          mkdir -p "$report_dir"
+          bash scripts/run-container-image-proof.sh \
+            >"$report_dir/container-proof.json"
+
+      - name: Validate sanitized image report
+        shell: bash
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+            import { readFile } from "node:fs/promises";
+
+            const report = JSON.parse(
+              await readFile(
+                `${process.env.RUNNER_TEMP}/guardian-container-proof/container-proof.json`,
+                "utf8",
+              ),
+            );
+            const packageJson = JSON.parse(
+              await readFile("package.json", "utf8"),
+            );
+            const requiredTopLevelKeys = [
+              "cleanup",
+              "guardianVersion",
+              "imagePublished",
+              "lobsterVersion",
+              "negativeContracts",
+              "nodeVersion",
+              "ok",
+              "openclawVersion",
+              "proof",
+              "roles",
+              "runtimeRegistration",
+              "schemaVersion",
+              "sourceRevision",
+            ];
+            const requiredNegativeContracts = [
+              "arbitraryLobsterBlocked",
+              "corruptBridgeState",
+              "hostDistExcluded",
+              "missingArtifact",
+              "missingBridgeEnvironment",
+              "missingGatewayEnvironment",
+              "reusedBridgeCredentials",
+              "unknownRole",
+              "unwritableBridgeState",
+            ];
+            const actualNegativeContracts = Object.keys(
+              report.negativeContracts ?? {},
+            ).sort();
+            if (
+              report.schemaVersion !== 1 ||
+              JSON.stringify(Object.keys(report).sort()) !==
+                JSON.stringify(requiredTopLevelKeys) ||
+              report.ok !== true ||
+              report.proof !== "dataops-guardian-container-image" ||
+              report.sourceRevision !== process.env.EXPECTED_SOURCE_COMMIT ||
+              report.guardianVersion !== packageJson.version ||
+              report.nodeVersion !== "24.16.0" ||
+              report.openclawVersion !== "2026.6.34" ||
+              report.lobsterVersion !== "2026.6.34" ||
+              report.roles?.gateway !== true ||
+              report.roles?.bridge !== true ||
+              JSON.stringify(Object.keys(report.roles ?? {}).sort()) !==
+                JSON.stringify(["bridge", "gateway"]) ||
+              report.runtimeRegistration?.tools !== 5 ||
+              report.runtimeRegistration?.hooks !== 5 ||
+              report.runtimeRegistration?.lobsterApprovalRestart !== true ||
+              JSON.stringify(
+                Object.keys(report.runtimeRegistration ?? {}).sort(),
+              ) !==
+                JSON.stringify([
+                  "hooks",
+                  "lobsterApprovalRestart",
+                  "tools",
+                ]) ||
+              JSON.stringify(actualNegativeContracts) !==
+                JSON.stringify(requiredNegativeContracts) ||
+              Object.values(report.negativeContracts).some(
+                (value) => value !== true,
+              ) ||
+              report.cleanup !== true ||
+              report.imagePublished !== false
+            ) {
+              throw new Error("container image proof report failed CI acceptance");
+            }
+          NODE
+          test -z "$(git status --porcelain)"
+          cp \
+            "$RUNNER_TEMP/guardian-container-proof/container-proof.json" \
+            "$RUNNER_TEMP/guardian-container-proof/validated-container-proof.json"
+
+      - name: Check and remove image-proof leftovers
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          leaked=0
+          if ! docker info >/dev/null 2>&1; then
+            echo "::error::Docker daemon unavailable during image cleanup"
+            exit 1
+          fi
+          mapfile -t containers < <(
+            docker ps -aq --filter 'name=guardian-image-' || true
+          )
+          for container in "${containers[@]}"; do
+            echo "::error::container image proof left container $container"
+            docker rm -f "$container" || true
+            leaked=1
+          done
+          mapfile -t networks < <(
+            docker network ls --format '{{.Name}}' \
+              | grep '^guardian-image-proof-' || true
+          )
+          for network in "${networks[@]}"; do
+            echo "::error::container image proof left network $network"
+            docker network rm "$network" || true
+            leaked=1
+          done
+          mapfile -t volumes < <(
+            docker volume ls --format '{{.Name}}' \
+              | grep '^guardian-image-' || true
+          )
+          for volume in "${volumes[@]}"; do
+            echo "::error::container image proof left volume $volume"
+            docker volume rm -f "$volume" || true
+            leaked=1
+          done
+          mapfile -t images < <(
+            docker image ls --format '{{.Repository}}:{{.Tag}}' \
+              | grep '^guardian-image-proof:' || true
+          )
+          for image in "${images[@]}"; do
+            echo "::error::container image proof left image $image"
+            docker image rm -f "$image" || true
+            leaked=1
+          done
+          exit "$leaked"
+
+      - name: Upload image proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: guardian-container-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/guardian-container-proof/validated-container-proof.json
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 9
+
+  source-release-contract:
+    name: Fresh source release contract
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out release tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Use Node.js 24.15.0
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+          package-manager-cache: false
+
+      - name: Re-clone and verify the remote tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          EXPECTED_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          report_dir="$RUNNER_TEMP/guardian-source-release"
+          mkdir -p "$report_dir"
+          bash scripts/run-source-ref-proof.sh "$RELEASE_TAG" \
+            >"$report_dir/source-release-proof.json"
+          node --input-type=module <<'NODE'
+            import { readFile } from "node:fs/promises";
+
+            const report = JSON.parse(
+              await readFile(
+                `${process.env.RUNNER_TEMP}/guardian-source-release/source-release-proof.json`,
+                "utf8",
+              ),
+            );
+            const requiredTopLevelKeys = [
+              "guardianVersion",
+              "lobsterVersion",
+              "ok",
+              "openclawVersion",
+              "proof",
+              "releaseRef",
+              "runtimeRegistration",
+              "schemaVersion",
+              "sourceRevision",
+            ];
+            if (
+              report.schemaVersion !== 1 ||
+              JSON.stringify(Object.keys(report).sort()) !==
+                JSON.stringify(requiredTopLevelKeys) ||
+              report.ok !== true ||
+              report.proof !== "dataops-guardian-source-release" ||
+              report.releaseRef !== process.env.RELEASE_TAG ||
+              report.sourceRevision !== process.env.EXPECTED_SOURCE_COMMIT ||
+              report.guardianVersion !== process.env.RELEASE_TAG.slice(1) ||
+              report.openclawVersion !== "2026.6.34" ||
+              report.lobsterVersion !== "2026.6.34" ||
+              report.runtimeRegistration?.tools !== 5 ||
+              report.runtimeRegistration?.hooks !== 5 ||
+              report.runtimeRegistration?.lobsterApprovalRestart !== true ||
+              JSON.stringify(
+                Object.keys(report.runtimeRegistration ?? {}).sort(),
+              ) !==
+                JSON.stringify(["hooks", "lobsterApprovalRestart", "tools"])
+            ) {
+              throw new Error("source release proof failed tag acceptance");
+            }
+          NODE
+          cp \
+            "$RUNNER_TEMP/guardian-source-release/source-release-proof.json" \
+            "$RUNNER_TEMP/guardian-source-release/validated-source-release-proof.json"
+
+      - name: Upload source release evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: guardian-source-release-${{ github.ref_name }}-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/guardian-source-release/validated-source-release-proof.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 9
 
   integration:
     name: Full safety proof (Node 22.22.2 / kind v0.29.0)
@@ -328,7 +596,9 @@ jobs:
     if: ${{ always() }}
     needs:
       - check
+      - container-contract
       - integration
+      - source-release-contract
     runs-on: ubuntu-latest
     timeout-minutes: 2
     strategy:
@@ -343,12 +613,22 @@ jobs:
         shell: bash
         env:
           CHECK_RESULT: ${{ needs.check.result }}
+          CONTAINER_RESULT: ${{ needs.container-contract.result }}
           INTEGRATION_RESULT: ${{ needs.integration.result }}
+          SOURCE_RELEASE_RESULT: ${{ needs.source-release-contract.result }}
         run: |
           set -euo pipefail
-          if [[ "$CHECK_RESULT" != success || "$INTEGRATION_RESULT" != success ]]; then
+          expected_source_result=skipped
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            expected_source_result=success
+          fi
+          if [[ "$CHECK_RESULT" != success || \
+            "$CONTAINER_RESULT" != success || \
+            "$INTEGRATION_RESULT" != success || \
+            "$SOURCE_RELEASE_RESULT" != "$expected_source_result" ]]; then
             echo "::error::current release acceptance did not pass"
-            printf 'check=%s integration=%s\n' \
-              "$CHECK_RESULT" "$INTEGRATION_RESULT" >&2
+            printf 'check=%s container=%s integration=%s source=%s\n' \
+              "$CHECK_RESULT" "$CONTAINER_RESULT" "$INTEGRATION_RESULT" \
+              "$SOURCE_RELEASE_RESULT" >&2
             exit 1
           fi

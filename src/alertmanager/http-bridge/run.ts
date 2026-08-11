@@ -5,6 +5,7 @@ import { BridgeStateStore } from "./bridge-state.js";
 import { loadBridgeConfigFromEnv } from "./config.js";
 import { FingerprintLock } from "./fingerprint-lock.js";
 import { GatewayIncidentClient } from "./gateway-incident-client.js";
+import { assertDurableDirectoryWritable } from "./json-store.js";
 import { drainPendingCheckpoint, type ProcessorDeps } from "./processor.js";
 import { createHttpBridgeServer } from "./server.js";
 
@@ -17,6 +18,11 @@ import { createHttpBridgeServer } from "./server.js";
  */
 async function main(): Promise<void> {
   const config = loadBridgeConfigFromEnv();
+
+  // Do not connect to the Gateway or expose the webhook listener until the
+  // bridge has proved that its checkpoint/audit mount supports the durable
+  // write sequence those safety records require.
+  assertDurableDirectoryWritable(config.stateDir);
 
   const bridgeState = new BridgeStateStore(join(config.stateDir, "bridge-state.json"));
   const audit = new AuditLog(join(config.stateDir, "audit.jsonl"));

@@ -6,6 +6,9 @@ args:
     default: unknown-metric
   action:
     default: no_change_continue_observation
+  guardian_root:
+    default: .
+cwd: "${guardian_root}"
 steps:
   - id: prepare
     run: node scripts/remediation-step.mjs prepare

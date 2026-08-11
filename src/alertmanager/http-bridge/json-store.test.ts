@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  assertDurableDirectoryWritable,
   appendJsonLineDurable,
   deleteFileIfPresent,
   fsyncDirectoryIfSupported,
@@ -65,6 +66,20 @@ describe("deleteFileIfPresent", () => {
 
   it("is a no-op when the file does not exist", () => {
     expect(() => deleteFileIfPresent(join(dir, "missing.json"))).not.toThrow();
+  });
+});
+
+describe("assertDurableDirectoryWritable", () => {
+  it("completes a durable probe without leaving a file behind", () => {
+    const stateDir = join(dir, "state");
+    assertDurableDirectoryWritable(stateDir);
+    expect(readdirSync(stateDir)).toEqual([]);
+  });
+
+  it("fails when the configured state directory cannot be created", () => {
+    const file = join(dir, "not-a-directory");
+    writeFileSync(file, "occupied\n", "utf8");
+    expect(() => assertDurableDirectoryWritable(join(file, "state"))).toThrow();
   });
 });
 

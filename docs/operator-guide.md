@@ -1,6 +1,6 @@
 # Operator guide
 
-DataOps Guardian `v0.2.0` is a compatibility-first OpenClaw plugin prototype.
+DataOps Guardian `v0.3.0` is a compatibility-first OpenClaw plugin prototype.
 It provides read-only Prometheus evidence collection, deterministic metric
 inspection, durable incident state, remediation proposals, an allowlisted
 Kubernetes rollback, dual recovery verification, and bounded Agent evidence
@@ -13,7 +13,7 @@ gates. It is not approved for production or unattended remediation.
 - a dedicated OpenClaw profile for Guardian Agent runs;
 - a Prometheus-compatible instant-query endpoint reachable by the Gateway.
 
-Guardian `v0.2.0` does not implement bearer-token, mTLS, or managed-Prometheus
+Guardian `v0.3.0` does not implement bearer-token, mTLS, or managed-Prometheus
 authentication. Do not put credentials in a URL. For a non-public Prometheus
 deployment, use a network-restricted endpoint or a trusted local proxy that
 owns authentication.
@@ -24,29 +24,98 @@ Guardian is not published to npm or ClawHub. Pin the source tag, install its
 dependencies, build it, and link the checkout into OpenClaw:
 
 ```bash
-git clone --branch v0.2.0 --depth 1 \
+git clone --branch v0.3.0 --depth 1 \
   https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
 cd openclaw-dataops-guardian
 npm ci
 npm run build
 openclaw plugins install --link "$PWD"
 openclaw plugins enable dataops-guardian
+openclaw plugins install --link "$PWD/node_modules/@openclaw/lobster"
+openclaw plugins enable lobster
 ```
 
 PowerShell uses the same flow with the current directory resolved explicitly:
 
 ```powershell
-git clone --branch v0.2.0 --depth 1 `
+git clone --branch v0.3.0 --depth 1 `
   https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
 Set-Location openclaw-dataops-guardian
 npm ci
 npm run build
 openclaw plugins install --link (Get-Location).Path
 openclaw plugins enable dataops-guardian
+openclaw plugins install --link `
+  (Join-Path (Get-Location).Path "node_modules/@openclaw/lobster")
+openclaw plugins enable lobster
 ```
 
 Treat a plugin install as code execution. Review the pinned tag before loading
 it into a Gateway.
+
+On the dedicated Guardian profile, consent to exactly these plugins and Tools:
+
+```bash
+openclaw config set plugins.allow '["dataops-guardian","lobster"]'
+openclaw config set \
+  plugins.entries.dataops-guardian.hooks.allowConversationAccess true
+openclaw config set \
+  plugins.entries.dataops-guardian.config.lobsterToolPolicyMode \
+  incident_workflow_only
+openclaw config set tools.allow \
+  '["guardian_query_prometheus","guardian_inspect_metric_snapshot","guardian_propose_remediation","guardian_rollback_deployment","guardian_verify_deployment_recovery","lobster"]'
+```
+
+PowerShell can apply the same dedicated-profile policy without Bash line
+continuations:
+
+```powershell
+openclaw config set plugins.allow '["dataops-guardian","lobster"]'
+openclaw config set plugins.entries.dataops-guardian.hooks.allowConversationAccess true
+openclaw config set plugins.entries.dataops-guardian.config.lobsterToolPolicyMode incident_workflow_only
+openclaw config set tools.allow '["guardian_query_prometheus","guardian_inspect_metric_snapshot","guardian_propose_remediation","guardian_rollback_deployment","guardian_verify_deployment_recovery","lobster"]'
+```
+
+`lobster` is a shell-capable workflow runtime, so enabling the optional Tool is
+safe here only with Guardian's default `incident_workflow_only` hook. OpenClaw
+Agent Tool calls carrying a run identity are blocked; authenticated non-Agent
+loopback RPC may run only the checked-in incident workflow, and resume tokens
+must resolve to persisted state for that same workflow. The hook does not
+authenticate the caller: anything given the Gateway operator token has
+operator authority and can approve that exact workflow. Never give that token
+to model-controlled code. `lobsterToolPolicyMode=disabled` is reserved for
+controlled local fixtures and must not be used on an operational profile.
+
+For source installs, Guardian rewrites a validated approval request to the
+absolute workflow file in the linked checkout and supplies the checkout root
+as an internal workflow argument. Callers cannot choose either path, and the
+flow does not depend on the Gateway process working directory. Pending resume
+state defaults to Lobster's per-user `~/.lobster/state`; keep that directory on
+durable private storage. An explicit absolute `LOBSTER_STATE_DIR` may be used
+when the Gateway service environment provides one. The linked checkout path
+must not contain a `|` character; Lobster `2026.6.34` interprets such a path as
+inline pipeline syntax instead of a file.
+
+## Build the preinstalled container bundle
+
+`v0.3.0` also defines one immutable image with two explicit roles: `gateway`
+and `bridge`. No prebuilt registry image is published yet, so build from a
+clean, reviewed tag or commit:
+
+```bash
+npm run container:build -- dataops-guardian:0.3.0
+```
+
+The builder rejects a dirty or forged source revision and builds from a private
+archive of the exact commit. It never copies the checkout's ignored `dist/` or
+`node_modules/` trees. The image includes OpenClaw, Guardian, Lobster, the
+approval workflow, and the Bridge, but no credentials, provider configuration,
+Prometheus URL, kubeconfig, or operator state.
+
+See the [container and source-release contract](release-image-contract.md) for
+complete Gateway and Bridge launch examples, required mounts and environment
+variables, proof commands, healthcheck behavior, and the boundary with Phase
+6B deployment manifests.
 
 ## Configure a dedicated Guardian profile
 
@@ -76,7 +145,8 @@ loopback bridge, then removes them. The component contracts document the
 part of the safe baseline install.
 
 Non-bundled plugins require explicit consent before conversation hooks can
-observe an Agent run:
+observe an Agent run. The installation commands above set that consent; if you
+are repairing an older profile, apply it explicitly:
 
 ```bash
 openclaw config set \
@@ -98,11 +168,15 @@ runs. The default `on_guardian_tool` mode activates only after a run touches a
 `guardian_*` Tool. The `disabled` mode exists solely for controlled A/B
 evaluation and must not be used to weaken a normal Guardian profile.
 
-Restart an unmanaged Gateway after install or configuration changes:
+Restart the managed Gateway service after install or configuration changes:
 
 ```bash
 openclaw gateway restart
 ```
+
+If the Gateway was started manually, stop that process and launch it again;
+`openclaw gateway restart` controls the installed launchd, systemd, or Windows
+scheduled-task service.
 
 ## Verify the live runtime
 
@@ -157,6 +231,7 @@ A native WSL checkout under `~/Projects` is recommended for repeated runs.
 The runner clears inherited `OPENCLAW_CONFIG_PATH`, `OPENCLAW_PROFILE`, and
 `OPENCLAW_HOME` overrides before assigning its proof-owned state directory, so
 an exported caller profile cannot redirect the run into normal OpenClaw state.
+It also replaces an inherited `LOBSTER_STATE_DIR` with a proof-owned directory.
 Never point a proof script at a normal Gateway profile. The aggregate runner
 builds once before staging and reuses that artifact for its five components only
 after validating a run-owned stamp and the staged files; direct component proof
@@ -214,7 +289,7 @@ Common failures:
 | --- | --- |
 | Conversation hooks have loader diagnostics | Set `hooks.allowConversationAccess=true`, restart, and inspect the live runtime again. |
 | Prometheus query reports missing configuration | Set `prometheusBaseUrl` in plugin config; the Agent cannot provide it. |
-| Prometheus rejects authentication | `v0.2.0` has no credential provider; use a trusted proxy instead of credentials in the URL. |
+| Prometheus rejects authentication | `v0.3.0` has no credential provider; use a trusted proxy instead of credentials in the URL. |
 | Proposal Tool is blocked | Confirm both query and inspection Tools succeeded in the same Agent run. |
 | Log warns about a rejected run-context write | Guardian is using its bounded process-local fallback for the active run; durable incident state is unaffected. |
 

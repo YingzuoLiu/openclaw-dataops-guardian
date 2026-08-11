@@ -409,12 +409,23 @@ the reducer's contract in `docs/incident-state-v3.md`.
 |---|---|---|---|
 | `ALERTMANAGER_BRIDGE_HOST` | no | `127.0.0.1` | bind address |
 | `ALERTMANAGER_BRIDGE_PORT` | no | `9187` | listen port |
-| `ALERTMANAGER_BRIDGE_TOKEN` | yes | — | required bearer token |
-| `ALERTMANAGER_BRIDGE_STATE_DIR` | yes | — | directory for `bridge-state.json` and `audit.jsonl` |
-| `OPENCLAW_GATEWAY_URL` | yes | — | e.g. `ws://127.0.0.1:19184` |
+| `ALERTMANAGER_BRIDGE_TOKEN` | yes | — | required webhook bearer token; must differ from `OPENCLAW_GATEWAY_TOKEN` |
+| `ALERTMANAGER_BRIDGE_STATE_DIR` | yes | — | absolute durable directory for `bridge-state.json` and `audit.jsonl` |
+| `OPENCLAW_GATEWAY_URL` | yes | — | loopback only, e.g. `ws://127.0.0.1:19184`; the client uses OpenClaw's local backend protocol and does not carry a remote device identity |
 | `OPENCLAW_GATEWAY_TOKEN` | yes | — | Gateway operator token (`operator.admin`, `operator.read`, `operator.write` scopes) |
 | `ALERTMANAGER_BRIDGE_GATEWAY_REQUEST_TIMEOUT_MS` | no | `10000` | per-RPC timeout |
 | `ALERTMANAGER_BRIDGE_GATEWAY_CONNECT_TIMEOUT_MS` | no | `15000` | initial connect timeout |
+
+The webhook and Gateway tokens are separate credentials with different trust
+boundaries. The Bridge rejects startup when they are equal. After `npm run
+build`, start the source Bridge with its required environment set:
+
+```bash
+node dist/alertmanager/http-bridge/run.js
+```
+
+The process connects to the loopback Gateway and verifies durable state before
+opening its HTTP listener.
 
 ## Running the proof
 

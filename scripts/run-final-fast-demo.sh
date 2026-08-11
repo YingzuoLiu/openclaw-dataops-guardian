@@ -107,12 +107,19 @@ CURRENT_LOG="$RUNTIME_DIR/staging.log"
 progress "$CURRENT_COMPONENT"
 run_component 600s npm run build
 {
-  mkdir -p "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"
+  mkdir -p \
+    "$STAGED_GUARDIAN_DIR/workflows" \
+    "$STAGED_GUARDIAN_DIR/scripts" \
+    "$STAGED_LOBSTER_DIR"
   cp \
     "$ROOT_DIR/package.json" \
     "$ROOT_DIR/openclaw.plugin.json" \
     "$STAGED_GUARDIAN_DIR/"
   cp -R "$ROOT_DIR/dist" "$STAGED_GUARDIAN_DIR/dist"
+  cp "$ROOT_DIR/workflows/incident-remediation.lobster" \
+    "$STAGED_GUARDIAN_DIR/workflows/"
+  cp "$ROOT_DIR/scripts/remediation-step.mjs" \
+    "$STAGED_GUARDIAN_DIR/scripts/"
   ln -s "$ROOT_DIR/node_modules" "$STAGED_GUARDIAN_DIR/node_modules"
   cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/." "$STAGED_LOBSTER_DIR/"
   chmod -R go-w "$STAGED_GUARDIAN_DIR" "$STAGED_LOBSTER_DIR"
@@ -162,6 +169,7 @@ run_component 300s env \
   OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/approve-resume.json" \
   LOBSTER_STATE_DIR="$RUNTIME_DIR/approve-lobster" \
   GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
+  GUARDIAN_PROOF_GATEWAY_CWD="$RUNTIME_DIR" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=approve \
@@ -178,6 +186,7 @@ run_component 300s env \
   OPENCLAW_VERTICAL_RESUME_FILE="$RUNTIME_DIR/deny-resume.json" \
   LOBSTER_STATE_DIR="$RUNTIME_DIR/deny-lobster" \
   GUARDIAN_PROOF_PREBUILT_STAMP="$PREBUILT_STAMP" \
+  GUARDIAN_PROOF_GATEWAY_CWD="$RUNTIME_DIR" \
   GUARDIAN_PROOF_PLUGIN_DIR="$STAGED_GUARDIAN_DIR" \
   GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR" \
   GUARDIAN_PROOF_DECISION=deny \

@@ -102,6 +102,10 @@ describe("final demo source contract", () => {
     expect(fast).toContain(
       'GUARDIAN_PROOF_LOBSTER_PLUGIN_DIR="$STAGED_LOBSTER_DIR"',
     );
+    expect(occurrenceCount(
+      fast,
+      'GUARDIAN_PROOF_GATEWAY_CWD="$RUNTIME_DIR"',
+    )).toBe(2);
 
     const [prebuiltGuard, policy, live, bridge, vertical] = await Promise.all([
       source("scripts/guardian-proof-build.sh"),

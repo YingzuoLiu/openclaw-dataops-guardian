@@ -1,3 +1,6 @@
+// Guardian's before_tool_call hook treats this as a canonical marker. After
+// validating the request, it binds the pipeline and step working directory to
+// the installed Guardian root; callers cannot select either path.
 const LOBSTER_CWD = ".";
 
 export function buildLobsterApprovalRunRequest(

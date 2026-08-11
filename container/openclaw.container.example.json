@@ -1,0 +1,49 @@
+{
+  "gateway": {
+    "mode": "local",
+    "bind": "lan",
+    "auth": {
+      "mode": "token"
+    },
+    "controlUi": {
+      "enabled": false
+    }
+  },
+  "plugins": {
+    "allow": [
+      "dataops-guardian",
+      "lobster"
+    ],
+    "load": {
+      "paths": [
+        "/opt/dataops-guardian",
+        "/opt/dataops-guardian/node_modules/@openclaw/lobster"
+      ]
+    },
+    "entries": {
+      "dataops-guardian": {
+        "enabled": true,
+        "hooks": {
+          "allowConversationAccess": true
+        },
+        "config": {
+          "requireToolsGateMode": "on_guardian_tool",
+          "lobsterToolPolicyMode": "incident_workflow_only"
+        }
+      },
+      "lobster": {
+        "enabled": true
+      }
+    }
+  },
+  "tools": {
+    "allow": [
+      "guardian_query_prometheus",
+      "guardian_inspect_metric_snapshot",
+      "guardian_propose_remediation",
+      "guardian_rollback_deployment",
+      "guardian_verify_deployment_recovery",
+      "lobster"
+    ]
+  }
+}

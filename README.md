@@ -30,11 +30,11 @@ cluster, or reproduce the full safety matrix in a disposable kind environment.
 It is a safety-focused reference prototype, not a production or
 multi-cluster remediation service.
 
-> **Status:** The five-step implementation is complete. Release acceptance is
-> the exact-head `Full safety proof` CI job, which exercises authenticated
-> Alertmanager delivery, durable Gateway state, evidence Tools, resumable human
-> approval, one allowlisted kind mutation, restart reconciliation, dual
-> Deployment/Prometheus recovery, and cleanup.
+> **Status:** The five safety steps are complete. The `v0.3.0` source adds a
+> reproducible, dual-role OCI image contract so an exact commit can be run as
+> either the OpenClaw Gateway bundle or the Alertmanager bridge. Release
+> acceptance requires both the exact-head `Full safety proof` and the separate
+> `OCI image contract` CI job; no prebuilt registry image is published yet.
 
 ## How it works
 
@@ -80,6 +80,8 @@ Choose the proof that matches what you want to inspect:
 |---|---|---|
 | Build and run the deterministic test suite | `npm run check` | None |
 | Exercise policy, live Agent hooks, HTTP ingestion, crash recovery, and approve/deny paths | `npm run demo:fast` | Linux/WSL Bash; no Docker, cluster, paid API, or external model |
+| Build the immutable Guardian/OpenClaw image from the exact clean commit | `npm run container:build` | Linux/WSL Bash and Docker with image-pull access |
+| Prove both image roles and the baked plugin inventory | `npm run container:proof` | Linux/WSL Bash and Docker with image-pull access |
 | Reproduce the complete rollback and recovery safety matrix | `npm run demo` | Linux/WSL Bash, Docker, `kind`, `kubectl`, and image-pull network access |
 
 The full demo creates exactly one disposable kind cluster from digest-pinned
@@ -101,9 +103,11 @@ runs.
 
 </details>
 
-Guardian is not published to npm or ClawHub. To inspect or link the plugin into
-a dedicated OpenClaw profile, follow the [operator guide](docs/operator-guide.md).
-For the full positive/negative matrix and report contract, see the
+Guardian is not published to npm, ClawHub, or a container registry. You can
+install a pinned source tag or build the immutable image locally; follow the
+[operator guide](docs/operator-guide.md) and the
+[container and source-release contract](docs/release-image-contract.md). For
+the full positive/negative remediation matrix and report contract, see the
 [final safety proof](docs/final-safety-proof.md).
 
 ## Safety boundaries and guarantees
@@ -118,6 +122,7 @@ For the full positive/negative matrix and report contract, see the
 | Idempotency | The same occurrence and key cannot mutate twice; a genuinely new occurrence can execute a later rollback | [Real kind proof](docs/kubernetes-deployment-rollback.md#running-the-real-kind-proof) |
 | Recovery | Succeeded-attempt binding, audited Deployment readiness, and fresh administrator-owned Prometheus policy must all pass before `completed` | [Step 4 recovery contract](docs/deployment-prometheus-recovery.md) |
 | Final safety proof | Denial, ambiguous restart, off-target/RBAC rejection, resolved-is-not-recovery, scale-to-zero failure, replay protection, sanitization, and cleanup | [Step 5 proof matrix](docs/final-safety-proof.md) |
+| Release image | Digest-pinned OpenClaw host, runtime-only Guardian build, immutable Guardian/Lobster paths, non-root dual-role entrypoint, and source-bound OCI metadata | [Phase 6A image contract](docs/release-image-contract.md) |
 
 ## Verified results
 
@@ -157,9 +162,10 @@ For the full positive/negative matrix and report contract, see the
 
   Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
 - **Automated acceptance:** the TypeScript build and Vitest suite run on Node.js
-  22.22.2 and Node.js 24.15.0. After they pass, CI runs the complete demo on
-  Node.js 22.22.2 and validates that its sanitized `ok: true` report is bound
-  to the exact checked-out commit.
+  22.22.2 and Node.js 24.15.0. After they pass, CI runs the complete demo and a
+  separate Linux/amd64 OCI contract job. Both reports must be sanitized and
+  bound to the exact checked-out commit; a tag-triggered job additionally
+  proves a fresh remote source checkout.
 - **Real-model A/B evaluation:** across 24 independent trials—12 baseline and 12
   gated, forming 12 matched prompt pairs—the language-only baseline released 3
   unsupported conclusions; the gated arm released 0. All observed baseline
@@ -175,6 +181,9 @@ For the full positive/negative matrix and report contract, see the
 |---|---|
 | `npm run demo:fast` | No-cost policy, live Agent hook, HTTP bridge/crash recovery, and synthetic approve/deny summary |
 | `npm run demo` | Complete Step 5 live safety matrix in one disposable kind cluster |
+| `npm run container:build` | Build the dual-role image from an exact clean Git commit, never the live ignored `dist/` tree |
+| `npm run container:proof` | Inspect and run the real Gateway/Bridge image roles, plugin inventory, failure cases, and layer sentinel check |
+| `npm run release:source-proof -- v0.3.0` | Fresh-clone a real remote tag; verify install, build, five Tools/Hooks, and approval resume across a Gateway restart |
 | `npm run state:v3:restart-proof` | IncidentState v3 persists across Gateway restart |
 | `npm run state:restart-reconciliation-proof` | Interrupted attempts reconcile with external state without duplicate mutation |
 | `npm run alertmanager:ingestion-proof` | Canonicalization, deduplication, and reducer behavior |
@@ -200,6 +209,7 @@ requires the caller to supply `OPENROUTER_API_KEY`.
 | 3 | Real, gated, allowlisted Kubernetes Deployment rollback in kind | Complete | [PR #8](https://github.com/YingzuoLiu/openclaw-dataops-guardian/pull/8) |
 | 4 | Real post-rollback Deployment and Prometheus recovery verification | Complete | [Recovery contract and proof command](docs/deployment-prometheus-recovery.md) |
 | 5 | Complete fault/safety proof and final reproducible demo | Complete | [Final safety proof and demo](docs/final-safety-proof.md) |
+| 6A | Reproducible source release and dual-role OCI image contract | Complete in source; registry publication pending | [Release image contract](docs/release-image-contract.md) |
 
 ## Security model and non-goals
 
@@ -244,9 +254,11 @@ end-to-end negative and positive cases.
 ## Version contract
 
 - Node.js `22.22.2+` on Node 22, `24.15.0+` on Node 24, or Node 26+
-- OpenClaw `2026.6.34` for the `v0.2.0` compatibility proofs
+- OpenClaw `2026.6.34` for the `v0.2.0` and `v0.3.0` compatibility proofs
 - Lobster plugin `2026.6.34` for approval/resume compatibility
 - Plugin/Gateway compatibility floor `>=2026.6.34`
+- `v0.3.0` release image host: OpenClaw `2026.6.34` at the exact digest
+  recorded in the [image contract](docs/release-image-contract.md)
 
 The compatibility range should be widened only after the proofs are repeated
 against newer stable releases.
