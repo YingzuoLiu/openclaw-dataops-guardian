@@ -377,7 +377,10 @@ describe("Dockerfile boundary", () => {
     expect(dockerfile).toContain(
       "COPY --from=guardian-build --chown=root:root",
     );
-    expect(dockerfile).toContain("chmod -R a-w /opt/dataops-guardian");
+    expect(dockerfile).toContain(
+      "chmod -R a+rX,a-w /opt/dataops-guardian",
+    );
+    expect(dockerfile).not.toContain("chmod -R a-w /opt/dataops-guardian");
     expect(dockerfile).toContain("HEALTHCHECK NONE");
     expect(dockerfile).toContain(
       'ENTRYPOINT ["tini", "-s", "--", "/opt/dataops-guardian/container/entrypoint.sh"]',

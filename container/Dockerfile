@@ -42,7 +42,7 @@ RUN ln -s /app ./node_modules/openclaw && \
     chmod 0555 ./container/entrypoint.sh && \
     node ./container/runtime-contract.mjs write-metadata \
       "$GUARDIAN_VERSION" "$GUARDIAN_SOURCE_REVISION" && \
-    chmod -R a-w /opt/dataops-guardian && \
+    chmod -R a+rX,a-w /opt/dataops-guardian && \
     node ./container/runtime-contract.mjs verify-image
 
 LABEL org.opencontainers.image.title="OpenClaw DataOps Guardian" \
