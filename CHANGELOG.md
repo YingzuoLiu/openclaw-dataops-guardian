@@ -84,8 +84,9 @@ semantic versioning for its source tags; it is not published to npm or ClawHub.
 
 ### Security
 
-- Recovery persistence now requires an approved recovery state, the latest
-  succeeded attempt, exact target/`notBefore` binding, a valid fresh
+- Recovery persistence now requires an approved recovery state and binds to the
+  most recently appended remediation attempt, which must itself be succeeded;
+  it also requires exact target/`notBefore` binding, a valid fresh
   `checkedAt`, and an internally consistent aggregate decision. Completion is
   independently read back from the Gateway session store before it is accepted,
   then replay-tested after a fresh Gateway restart.

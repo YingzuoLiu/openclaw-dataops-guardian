@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildLobsterToolGateDecision,
   INCIDENT_WORKFLOW,
+  INCIDENT_WORKFLOW_PATH,
 } from "./lobster-tool-gate.js";
 
 const temporaryRoots: string[] = [];
@@ -103,6 +104,40 @@ async function createResumeFixture(overrides: Record<string, unknown> = {}) {
 }
 
 describe("Lobster incident-workflow gate", () => {
+  it("pins the persisted resume contract to the real workflow layout", async () => {
+    const workflow = await readFile(INCIDENT_WORKFLOW_PATH, "utf8");
+    const stepIds = [...workflow.matchAll(/^\s*- id:\s+([a-z_]+)\s*$/gm)].map(
+      (match) => match[1],
+    );
+
+    expect(stepIds).toEqual(["prepare", "confirm", "execute", "recovery"]);
+    expect(workflow).toMatch(
+      /- id: confirm\s+approval: Execute the proposed DataOps remediation\?/,
+    );
+
+    const wrongIndex = await createResumeFixture({ resumeAtIndex: 3 });
+    await expect(
+      buildLobsterToolGateDecision({
+        rawConfig: {},
+        toolParams: wrongIndex.params,
+        env: { LOBSTER_STATE_DIR: wrongIndex.stateDir },
+        expectedWorkflowPath: wrongIndex.workflowPath,
+      }),
+    ).resolves.toMatchObject({ block: true });
+
+    const wrongApprovalStep = await createResumeFixture({
+      approvalStepId: "execute",
+    });
+    await expect(
+      buildLobsterToolGateDecision({
+        rawConfig: {},
+        toolParams: wrongApprovalStep.params,
+        env: { LOBSTER_STATE_DIR: wrongApprovalStep.stateDir },
+        expectedWorkflowPath: wrongApprovalStep.workflowPath,
+      }),
+    ).resolves.toMatchObject({ block: true });
+  });
+
   it("blocks run-identified Agent Lobster calls, including the baked workflow", async () => {
     await expect(
       buildLobsterToolGateDecision({

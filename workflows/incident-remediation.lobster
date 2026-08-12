@@ -1,3 +1,6 @@
+# SECURITY: This workflow depends on Guardian's default-on Lobster tool gate to
+# bind its file, guardian_root, arguments, and persisted resume state. Disabling
+# that gate removes these execution constraints and is supported only for tests.
 name: dataops-guardian-incident-remediation
 args:
   alert_id:

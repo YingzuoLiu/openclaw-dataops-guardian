@@ -17,6 +17,8 @@ const ALLOWED_REMEDIATION_ACTIONS = new Set([
 const WORKFLOW_STATE_KEY =
   /^workflow_resume_[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_STATE_BYTES = 1024 * 1024;
+const INCIDENT_APPROVAL_STEP_ID = "confirm";
+const INCIDENT_RESUME_AT_INDEX = 2;
 
 type LobsterGateDecision =
   | { block: true; blockReason: string }
@@ -190,9 +192,14 @@ function validatePersistedResumeState(
       "steps",
     ]) ||
     state.filePath !== expectedWorkflowPath ||
-    state.resumeAtIndex !== 2 ||
-    state.approvalStepId !== "confirm" ||
+    state.resumeAtIndex !== INCIDENT_RESUME_AT_INDEX ||
+    state.approvalStepId !== INCIDENT_APPROVAL_STEP_ID ||
     !isRecord(state.approvalIdentity) ||
+    // The current workflow intentionally declares no initiated/required
+    // approver identity. Treat any identity fields as a contract change rather
+    // than accepting state that the Guardian gate did not authorize. Enabling
+    // Lobster identity constraints must update this validator and its workflow
+    // layout test together.
     Object.keys(state.approvalIdentity).length !== 0 ||
     !isCanonicalIsoTimestamp(state.createdAt) ||
     !isRecord(state.args) ||
@@ -322,6 +329,9 @@ export async function buildLobsterToolGateDecision({
   const expectedGuardianRoot = dirname(dirname(expectedWorkflowPath));
   const runArgs = validatedRunArgs(toolParams);
   if (runArgs) {
+    // OpenClaw applies before_tool_call params as a shallow override merge.
+    // Return only gate-owned fields so the validated action and timeoutMs from
+    // the original request remain intact under the pinned host contract.
     return {
       params: {
         cwd: ".",
@@ -343,6 +353,8 @@ export async function buildLobsterToolGateDecision({
       homeDirectory,
     ))
   ) {
+    // The same shallow override merge preserves the already validated resume
+    // token, approval decision, action, and timeout while fixing the cwd.
     return { params: { cwd: "." } };
   }
   return {
