@@ -28,6 +28,7 @@ import { createVerifyDeploymentRecoveryTool } from "./tools/verify-deployment-re
 import { buildRollbackDeploymentToolGateDecision } from "./hooks/rollback-deployment-gate.js";
 import { buildVerifyDeploymentRecoveryToolGateDecision } from "./hooks/verify-deployment-recovery-gate.js";
 import { readRuntimeIncidentState } from "./hooks/runtime-incident-state-reader.js";
+import { buildLobsterToolGateDecision } from "./hooks/lobster-tool-gate.js";
 
 export {
   isRestartReconciliationManualReview,
@@ -219,7 +220,7 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
 
     api.on(
       "before_tool_call",
-      (event, ctx) => {
+      async (event, ctx) => {
         const requireToolsMode = resolveGuardianRequireToolsMode(
           api.pluginConfig,
         );
@@ -234,6 +235,14 @@ const plugin: OpenClawPluginDefinition = definePluginEntry({
           if (runEvidence) {
             storeRunEvidence(runId, runEvidence);
           }
+        }
+
+        if (event.toolName === "lobster") {
+          return buildLobsterToolGateDecision({
+            rawConfig: api.pluginConfig,
+            toolParams: event.params,
+            runId: event.runId ?? ctx.runId,
+          });
         }
 
         if (event.toolName === "guardian_rollback_deployment") {

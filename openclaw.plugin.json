@@ -60,6 +60,15 @@
         "default": "on_guardian_tool",
         "description": "Control require_tools enforcement. disabled is intended for controlled A/B evaluation; durable incident and approval policy remains active."
       },
+      "lobsterToolPolicyMode": {
+        "type": "string",
+        "enum": [
+          "incident_workflow_only",
+          "disabled"
+        ],
+        "default": "incident_workflow_only",
+        "description": "Block run-identified Agent calls and restrict authenticated non-Agent Lobster RPC to the immutable incident workflow. disabled is for controlled local fixtures only."
+      },
       "kubernetes": {
         "type": "object",
         "additionalProperties": false,

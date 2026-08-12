@@ -103,11 +103,16 @@ fi
 
 start_gateway() {
   local log_file="$1"
-  ./node_modules/.bin/openclaw gateway run \
-    --port "$OPENCLAW_GATEWAY_PORT" \
-    --bind loopback \
-    --auth token \
-    --allow-unconfigured >"$log_file" 2>&1 &
+  local gateway_cwd="${GUARDIAN_PROOF_GATEWAY_CWD:-${GUARDIAN_PROOF_PLUGIN_DIR:-$PWD}}"
+  local openclaw_bin="$PWD/node_modules/.bin/openclaw"
+  (
+    cd "$gateway_cwd"
+    exec "$openclaw_bin" gateway run \
+      --port "$OPENCLAW_GATEWAY_PORT" \
+      --bind loopback \
+      --auth token \
+      --allow-unconfigured
+  ) >"$log_file" 2>&1 &
   GATEWAY_PID=$!
 
   for _ in $(seq 1 80); do

@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -35,15 +34,13 @@ function pendingApproval(): IncidentState {
 }
 
 describe("authorizeRemediationWithLobster", () => {
-  it("sends relative in-root cwd values in the proof's run and resume payloads", async () => {
+  it("uses the canonical cwd marker that Guardian resolves in the Gateway", async () => {
     const captured: unknown[] = [];
     const fakeGatewayClient = {
       request: async (_method: string, payload: unknown) => {
         captured.push(structuredClone(payload));
       },
     };
-    const gatewayRoot = "/tmp/fake-step3-gateway-root";
-
     await fakeGatewayClient.request(
       "tools.invoke",
       buildLobsterApprovalRunRequest("agent:main:test", "occurrence-1"),
@@ -56,13 +53,6 @@ describe("authorizeRemediationWithLobster", () => {
     expect(captured).toHaveLength(2);
     for (const payload of captured as Array<{ args: { cwd: string } }>) {
       expect(payload.args.cwd).toBe(".");
-      expect(path.isAbsolute(payload.args.cwd)).toBe(false);
-      const resolved = path.resolve(gatewayRoot, payload.args.cwd);
-      const relative = path.relative(gatewayRoot, resolved);
-      expect(relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative))).toBe(
-        true,
-      );
-      expect(payload.args.cwd).not.toBe(process.cwd());
     }
   });
 

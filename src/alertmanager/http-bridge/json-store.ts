@@ -9,7 +9,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 /**
@@ -113,6 +113,46 @@ export function appendJsonLineDurable(path: string, value: unknown): void {
 
   if (isNewFile) {
     fsyncDirectoryIfSupported(dir);
+  }
+}
+
+/**
+ * Proves that a state directory can complete the same create, fsync, unlink,
+ * and directory-fsync sequence the bridge relies on before the HTTP listener
+ * is exposed. A merely existing or access(2)-writable mount is insufficient:
+ * the durability syscalls themselves must succeed.
+ */
+export function assertDurableDirectoryWritable(dir: string): void {
+  mkdirSync(dir, { recursive: true });
+  const probePath = join(
+    dir,
+    `.guardian-durability-probe-${process.pid}-${randomBytes(6).toString("hex")}`,
+  );
+  let fd: number | undefined;
+  try {
+    fd = openSync(probePath, "wx", 0o600);
+    writeFullySync(fd, "guardian-durability-probe\n");
+    fsyncSync(fd);
+    closeSync(fd);
+    fd = undefined;
+    unlinkSync(probePath);
+    fsyncDirectoryIfSupported(dir);
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        closeSync(fd);
+      } catch {
+        // Preserve the original durability failure.
+      }
+    }
+    if (existsSync(probePath)) {
+      try {
+        unlinkSync(probePath);
+      } catch {
+        // Preserve the original durability failure.
+      }
+    }
+    throw error;
   }
 }
 

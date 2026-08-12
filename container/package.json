@@ -1,0 +1,15 @@
+{
+  "name": "openclaw-dataops-guardian-container-runtime",
+  "version": "0.3.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "^24.15.0 || >=26.0.0"
+  },
+  "dependencies": {
+    "@kubernetes/client-node": "1.4.0",
+    "@openclaw/lobster": "2026.6.34",
+    "typebox": "1.1.39"
+  }
+}

@@ -1,6 +1,8 @@
 # Proof 2: session extension compatibility
 
-Status: **passed** on 2026-07-18 with `openclaw@2026.6.9` and Node.js 24.14.0.
+Status: **historical proof passed** on 2026-07-18 with
+`openclaw@2026.6.9` and Node.js 24.14.0. The current release contract has
+since been re-proved on OpenClaw `2026.6.34`.
 
 ## What was proved
 
@@ -34,8 +36,11 @@ The raw OpenClaw session store also contained the state under
   projected extension value is required. A list-based UI should fetch the full
   row only for the selected session.
 - `sessions.pluginPatch` requires the `operator.admin` Gateway scope.
-- The compatibility floor remains `>=2026.6.9`; the package is pinned exactly to
-  2026.6.9 until the spike is repeated against a later stable release.
+- This historical spike established a `>=2026.6.9` floor at the time. The
+  current package and plugin compatibility floor are `>=2026.6.34`, with the
+  development host and release proofs pinned exactly to `2026.6.34`; see the
+  repository's current version contract rather than using this historical
+  fixture as an install constraint.
 
 ## Test isolation and security
 

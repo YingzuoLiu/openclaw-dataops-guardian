@@ -1,6 +1,6 @@
 {
   "name": "openclaw-dataops-guardian",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -18,8 +18,12 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "build:runtime": "node scripts/build-runtime.mjs",
     "test": "vitest run",
     "check": "npm run build && npm test",
+    "container:build": "bash scripts/build-container-image.sh",
+    "container:proof": "bash scripts/run-container-image-proof.sh",
+    "release:source-proof": "bash scripts/run-source-ref-proof.sh",
     "demo:fast": "bash scripts/run-final-fast-demo.sh",
     "demo": "bash scripts/run-final-demo.sh",
     "plugin:inspect": "openclaw plugins inspect dataops-guardian --runtime --json",
@@ -44,11 +48,19 @@
   "dependencies": {
     "@kubernetes/client-node": "1.4.0",
     "@openclaw/lobster": "2026.6.34",
-    "openclaw": "2026.6.34",
     "typebox": "1.1.39"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.6.34"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "openclaw": "2026.6.34",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   },

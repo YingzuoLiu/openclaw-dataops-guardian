@@ -172,11 +172,14 @@ assert_proof_ports_available() {
 start_gateway() {
   local log_file="$1"
   CURRENT_GATEWAY_LOG="$log_file"
-  "$ROOT_DIR/node_modules/.bin/openclaw" gateway run \
-    --port "$OPENCLAW_GATEWAY_PORT" \
-    --bind loopback \
-    --auth token \
-    --allow-unconfigured >"$log_file" 2>&1 &
+  (
+    cd "$GUARDIAN_PLUGIN_DIR"
+    exec "$ROOT_DIR/node_modules/.bin/openclaw" gateway run \
+      --port "$OPENCLAW_GATEWAY_PORT" \
+      --bind loopback \
+      --auth token \
+      --allow-unconfigured
+  ) >"$log_file" 2>&1 &
   GATEWAY_PID=$!
   if ! wait_for_tcp_port "$OPENCLAW_GATEWAY_PORT" "Gateway" "$GATEWAY_PID" "$log_file"; then
     tail -n 200 "$log_file" >&2 || true
@@ -434,9 +437,15 @@ npm run build
 
 # OpenClaw rejects world-writable plugin roots, so stage only proof-owned
 # plugin copies beneath /tmp. No source or credential is written to the repo.
-mkdir -p "$GUARDIAN_PLUGIN_DIR" "$LOBSTER_PLUGIN_DIR"
+mkdir -p \
+  "$GUARDIAN_PLUGIN_DIR/workflows" \
+  "$GUARDIAN_PLUGIN_DIR/scripts" \
+  "$LOBSTER_PLUGIN_DIR"
 cp "$ROOT_DIR/package.json" "$ROOT_DIR/openclaw.plugin.json" "$GUARDIAN_PLUGIN_DIR/"
 cp -R "$ROOT_DIR/dist" "$GUARDIAN_PLUGIN_DIR/dist"
+cp "$ROOT_DIR/workflows/incident-remediation.lobster" \
+  "$GUARDIAN_PLUGIN_DIR/workflows/"
+cp "$ROOT_DIR/scripts/remediation-step.mjs" "$GUARDIAN_PLUGIN_DIR/scripts/"
 ln -s "$ROOT_DIR/node_modules" "$GUARDIAN_PLUGIN_DIR/node_modules"
 cp -R "$ROOT_DIR/node_modules/@openclaw/lobster/." "$LOBSTER_PLUGIN_DIR/"
 

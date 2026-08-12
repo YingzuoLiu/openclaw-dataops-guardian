@@ -1,9 +1,9 @@
 # Final safety proof and reproducible demo (Step 5)
 
-Status: **release-gated by exact-head Linux CI**. This is the `v0.2.0`
-release acceptance contract. CI runs `npm run demo` end to end and requires an
-allowlisted `ok: true` report, exact source-commit binding, and cleanup before
-the job can pass. It composes the component proofs
+Status: **release-gated by exact-head Linux CI**. Introduced for `v0.2.0`, this
+remains the end-to-end safety acceptance contract for `v0.3.0`. CI runs `npm
+run demo` and requires an allowlisted `ok: true` report, exact source-commit
+binding, and cleanup before the job can pass. It composes the component proofs
 from Steps 1-4 and adds bounded live failure and authority cases without
 expanding Guardian into a production orchestrator.
 
