@@ -33,16 +33,17 @@ function between(text, start, end) {
 
 describe("final proof source contract", () => {
   it("keeps the replay console separate from fast and full proof commands", async () => {
-    const [packageText, workflow, fast, full] = await Promise.all([
+    const [packageText, workflow, fast, full, contributing] = await Promise.all([
       source("package.json"),
       source(".github/workflows/ci.yml"),
       source("scripts/run-final-fast-demo.sh"),
       source("scripts/run-final-demo.sh"),
+      source("CONTRIBUTING.md"),
     ]);
     const packageJson = JSON.parse(packageText);
 
     expect(packageJson.scripts.demo).toBe("node demo/server.mjs");
-    expect(packageJson.scripts["demo:replay"]).toBe("node demo/server.mjs");
+    expect(packageJson.scripts).not.toHaveProperty("demo:replay");
     expect(packageJson.scripts["demo:fast"]).toBe(
       "bash scripts/run-final-fast-demo.sh",
     );
@@ -51,6 +52,11 @@ describe("final proof source contract", () => {
     );
     expect(workflow).toContain("npm run --silent proof:full");
     expect(workflow).not.toContain("npm run --silent demo \\");
+    expect(contributing).toContain("```bash\nnpm run proof:full\n```");
+    expect(contributing).not.toContain("```bash\nnpm run demo\n```");
+    expect(contributing).toContain(
+      "offline `npm run demo` Console replays a checked-in sanitized artifact",
+    );
 
     expectInOrder(fast, [
       "run-policy-registration-proof.sh",

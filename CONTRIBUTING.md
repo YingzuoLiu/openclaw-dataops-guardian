@@ -46,10 +46,12 @@ reconciliation, recovery, report sanitization, or cleanup must also run the
 full disposable-cluster proof on Linux/WSL with Docker, `kind`, and `kubectl`:
 
 ```bash
-npm run demo
+npm run proof:full
 ```
 
-Never repoint this command at an existing or production cluster.
+Never repoint this proof command at an existing or production cluster. The
+offline `npm run demo` Console replays a checked-in sanitized artifact and is
+not a substitute for this integration proof.
 
 ## Pull requests
 
@@ -59,7 +61,7 @@ Never repoint this command at an existing or production cluster.
 - Keep unrelated cleanup out of the same change.
 - Confirm `npm run check` and `npm run demo:fast` pass.
 - For changes to the live integration boundaries listed above, include the
-  sanitized `npm run demo` result.
+  sanitized `npm run proof:full` result.
 
 Production-mutating remediation, new credential handling, and broader network
 access require an explicit design and threat-model review before implementation.

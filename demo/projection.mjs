@@ -179,7 +179,7 @@ export function buildDemoProjection(report, provenance) {
       title: "Lobster approval resumed the workflow",
       outcome: live.approval.approvedWorkflowStatus,
       summary:
-        "A real Lobster run/resume path approved the proof occurrence. Replay controls on this page are not production approval controls.",
+        "The CI/kind proof used Lobster run/resume to approve this occurrence. Replay controls on this page are not production approval controls.",
       jsonPointers: ["$.live.approval.approvedWorkflowStatus"],
       sourceJson: {
         approvedWorkflowStatus:
@@ -299,7 +299,7 @@ export function buildDemoProjection(report, provenance) {
       title: "Denied means zero mutation",
       outcome: live.approval.deniedIncidentStage,
       summary:
-        "The live deny path was cancelled at approval_gate and dispatched no Kubernetes mutation.",
+        "The deny path in the same CI/kind run stopped at approval_gate and dispatched no Kubernetes mutation.",
       jsonPointers: [
         "$.live.approval.deniedWorkflowStatus",
         "$.live.approval.deniedBlockedBy",
@@ -356,10 +356,6 @@ export function buildDemoProjection(report, provenance) {
     schemaVersion: 1,
     mode: "sanitized-proof-replay",
     banner: "Demo mode — sanitized proof replay",
-    valueStatement:
-      "Guardian turns an operational alert into an evidence-backed, human-approved, replay-safe rollback—and will not call it recovered until both infrastructure and application signals agree.",
-    replayNotice:
-      "This is a fast visual projection of aggregate, sanitized proof fields—not a timestamped event log and not a live Kubernetes operation.",
     provenance: {
       classification: provenance.classification,
       label: "Validated GitHub Actions full-safety-proof artifact",
@@ -373,12 +369,12 @@ export function buildDemoProjection(report, provenance) {
       documentationUrl: `https://github.com/YingzuoLiu/openclaw-dataops-guardian/blob/${sourceCommit}/docs/final-safety-proof.md`,
       reportSha256: provenance.validatedReportSha256,
       environment: [
-        live.environment.kindCluster ? "disposable kind" : "kind not observed",
+        live.environment.kindCluster ? "Disposable kind" : "Kind not observed",
         live.environment.realPrometheus
-          ? "real Prometheus"
+          ? "Real Prometheus"
           : "Prometheus not observed",
         live.environment.realLobster
-          ? "real Lobster"
+          ? "Real Lobster"
           : "Lobster not observed",
       ],
     },
@@ -431,7 +427,7 @@ export function buildDemoProjection(report, provenance) {
         label: "Fresh Signal",
         state: live.recovery.prometheusHealthy ? "passed" : "failed",
         revealAt: "fresh-signal",
-        detail: `${live.recovery.recoveredMetricValue} ≥ ${live.recovery.threshold}`,
+        detail: `metric ${live.recovery.recoveredMetricValue} ≥ threshold ${live.recovery.threshold}`,
       },
     ],
     events,

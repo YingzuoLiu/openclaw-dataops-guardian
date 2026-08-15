@@ -67,4 +67,24 @@ describe("ReplayState", () => {
     expect(cancel).toHaveBeenCalledWith("queued-handle");
     expect(state.snapshot()).toMatchObject({ cursor: -1, playing: false });
   });
+
+  it("finishes in one update for reduced-motion playback", () => {
+    const cancel = vi.fn();
+    const onChange = vi.fn();
+    const state = new ReplayState(4, { cancel, onChange });
+    state.timer = "queued-handle";
+    state.playing = true;
+
+    state.finish();
+
+    expect(cancel).toHaveBeenCalledWith("queued-handle");
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(state.snapshot()).toEqual({
+      cursor: 3,
+      selected: 3,
+      playing: false,
+      complete: true,
+      progress: 1,
+    });
+  });
 });

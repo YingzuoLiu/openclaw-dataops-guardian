@@ -97,6 +97,17 @@ export class ReplayState {
     }
   }
 
+  finish() {
+    if (this.timer !== undefined) {
+      this.cancel(this.timer);
+      this.timer = undefined;
+    }
+    this.cursor = this.length - 1;
+    this.selected = this.cursor;
+    this.playing = false;
+    this.emit();
+  }
+
   reset() {
     if (this.timer !== undefined) {
       this.cancel(this.timer);

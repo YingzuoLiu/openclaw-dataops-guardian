@@ -39,13 +39,13 @@
             Demo mode — sanitized proof replay
           </p>
           <h1 id="page-title">
-            One alert. One authorized rollback.
-            <span>No shortcuts to “recovered.”</span>
+            From alert to
+            <span>verified recovery.</span>
           </h1>
-          <p id="value-statement" class="hero-lede">
-            Guardian turns an operational alert into an evidence-backed,
-            human-approved, replay-safe rollback—and requires infrastructure and
-            application recovery to agree.
+          <p class="hero-lede">
+            Guardian persists one incident, checks Prometheus evidence, waits for
+            human approval, and permits one allowlisted rollback. Recovery requires
+            both Deployment readiness and a fresh Prometheus signal.
           </p>
           <div class="hero-actions">
             <button class="button button-primary" id="hero-play" type="button">
@@ -54,7 +54,7 @@
             </button>
             <a class="button button-secondary" href="#audit">Inspect proof JSON</a>
           </div>
-          <p id="replay-notice" class="truth-note">
+          <p class="truth-note">
             Fast visual replay only. No live Kubernetes operation is performed.
           </p>
         </div>
@@ -75,15 +75,15 @@
           <dl class="proof-facts">
             <div>
               <dt>Runtime</dt>
-              <dd>Disposable kind</dd>
+              <dd id="runtime-fact">Loading…</dd>
             </div>
             <div>
               <dt>Evidence</dt>
-              <dd>Real Prometheus</dd>
+              <dd id="evidence-fact">Loading…</dd>
             </div>
             <div>
               <dt>Approval</dt>
-              <dd>Real Lobster</dd>
+              <dd id="approval-fact">Loading…</dd>
             </div>
             <div>
               <dt>Console access</dt>
@@ -102,34 +102,38 @@
           <div class="incident-symbol" aria-hidden="true">!</div>
           <div>
             <p class="eyebrow">INCIDENT</p>
-            <h2 id="incident-title">Sanitized proof occurrence</h2>
-            <p id="incident-identifier">Identifier withheld by artifact contract</p>
+            <h2 id="incident-title">Loading proof occurrence…</h2>
+            <p id="incident-identifier">Loading artifact boundary…</p>
           </div>
         </div>
         <div class="incident-stat">
-          <span>Replay state</span>
-          <strong id="incident-status" class="status-neutral">Ready</strong>
+          <span>Validated state</span>
+          <strong id="incident-status" class="status-neutral">Loading…</strong>
         </div>
         <div class="incident-stat">
           <span>Deduplication</span>
-          <strong id="dedup-result">created → duplicate</strong>
+          <strong id="dedup-result">Loading…</strong>
         </div>
         <div class="incident-stat">
           <span>Mutation dispatches</span>
-          <strong id="mutation-count">1</strong>
+          <strong id="mutation-count">—</strong>
         </div>
         <div class="incident-stat incident-stat-wide">
           <span>Completion rule</span>
-          <strong id="completion-rule">Deployment + fresh metric</strong>
+          <strong id="completion-rule">Loading…</strong>
         </div>
       </section>
 
       <section class="gate-section" aria-labelledby="gate-title">
         <div class="section-kicker">
-          <p class="eyebrow">NON-BYPASSABLE CONTROLS</p>
+          <p class="eyebrow">PRE-MUTATION SAFETY GATES</p>
           <h2 id="gate-title">Three gates before mutation</h2>
+          <p>
+            Validated artifact result. The replay below highlights where each gate
+            was observed.
+          </p>
         </div>
-        <div id="gate-grid" class="gate-grid" aria-live="polite"></div>
+        <div id="gate-grid" class="gate-grid"></div>
       </section>
 
       <section id="replay" class="replay-section" aria-labelledby="replay-title">
@@ -147,8 +151,16 @@
             </button>
             <button class="button button-primary compact" id="play-button" type="button">
               <span aria-hidden="true">▶</span>
-              Play replay
+              <span id="play-button-label">Play replay</span>
             </button>
+            <a
+              class="icon-button next-section-link"
+              id="replay-next-link"
+              href="#recovery"
+              hidden
+            >
+              Review recovery <span aria-hidden="true">↓</span>
+            </a>
           </div>
         </div>
 
@@ -156,7 +168,7 @@
           <span id="progress-bar"></span>
         </div>
         <div class="replay-meta">
-          <span id="step-count">0 / 10 observations</span>
+          <span id="step-count">Loading observations…</span>
           <span id="replay-state">Ready to replay</span>
         </div>
 
@@ -166,10 +178,10 @@
           <aside class="event-detail" aria-labelledby="detail-title">
             <div class="detail-head">
               <div>
-                <p id="detail-phase" class="eyebrow">SELECT AN OBSERVATION</p>
-                <h3 id="detail-title">Alertmanager firing accepted</h3>
+                <p id="detail-phase" class="eyebrow">PROOF OBSERVATION</p>
+                <h3 id="detail-title">Loading first observation…</h3>
               </div>
-              <span id="detail-outcome" class="outcome-chip">created</span>
+              <span id="detail-outcome" class="outcome-chip">Loading…</span>
             </div>
             <p id="detail-summary" class="detail-summary"></p>
 
@@ -195,7 +207,7 @@
         <p id="live-announcement" class="sr-only" aria-live="polite"></p>
       </section>
 
-      <section class="recovery-section" aria-labelledby="recovery-title">
+      <section id="recovery" class="recovery-section" aria-labelledby="recovery-title">
         <div class="section-kicker">
           <p class="eyebrow">DUAL RECOVERY VERIFICATION</p>
           <h2 id="recovery-title">Healthy infrastructure is necessary—not sufficient</h2>
@@ -205,11 +217,11 @@
           </p>
         </div>
         <div id="recovery-grid" class="recovery-grid"></div>
-        <div id="completion-lock" class="completion-lock is-locked">
+        <div id="completion-lock" class="completion-lock is-complete">
           <span class="completion-icon" aria-hidden="true">◇</span>
           <div>
-            <small>FINAL STATE</small>
-            <strong>Waiting for both recovery signals</strong>
+            <small id="completion-label">VALIDATED RESULT</small>
+            <strong>Loading recovery result…</strong>
           </div>
         </div>
       </section>
@@ -217,7 +229,7 @@
       <section class="fail-closed-section" aria-labelledby="fail-closed-title">
         <div class="section-kicker fail-closed-heading">
           <div>
-            <p class="eyebrow">LIVE NEGATIVE PROOFS</p>
+            <p class="eyebrow">FAIL-CLOSED CASES FROM THE SAME RUN</p>
             <h2 id="fail-closed-title">When a gate fails, Guardian stops</h2>
           </div>
           <span class="zero-mutation">0 unauthorized mutations</span>
@@ -239,7 +251,10 @@
               <strong id="audit-summary-title">Validated sanitized proof JSON</strong>
               <small id="audit-summary-meta">Loading source metadata…</small>
             </span>
-            <span class="expand-hint">Expand JSON</span>
+            <span class="expand-hint" aria-hidden="true">
+              <span class="when-closed">Expand JSON +</span>
+              <span class="when-open">Collapse JSON −</span>
+            </span>
           </summary>
           <div class="audit-body">
             <div class="json-panel-head">

@@ -45,14 +45,16 @@ function setTrustedGithubLink(id, value) {
 }
 
 function renderStaticModel(model) {
-  setText("value-statement", model.valueStatement);
-  setText("replay-notice", model.replayNotice);
   setText("incident-title", model.incident.reference);
   setText("incident-identifier", model.incident.identifier);
   setText("dedup-result", model.incident.deduplication);
   setText("mutation-count", model.incident.mutationDispatches);
   setText("completion-rule", model.incident.recovery);
   setText("commit-link", model.provenance.shortCommit);
+  const [runtime, evidence, approval] = model.provenance.environment;
+  setText("runtime-fact", runtime);
+  setText("evidence-fact", evidence);
+  setText("approval-fact", approval);
   setText(
     "audit-summary-meta",
     `run #${model.provenance.workflowRunNumber} · commit ${model.provenance.shortCommit} · sha256 ${model.provenance.reportSha256.slice(0, 12)}…`,
@@ -114,9 +116,9 @@ function eventIndex(model, eventId) {
 function renderGates(model, snapshot) {
   const cards = model.gates.map((gate, index) => {
     const revealIndex = eventIndex(model, gate.revealAt);
-    const revealed = snapshot.cursor >= revealIndex;
+    const current = snapshot.cursor === revealIndex;
     const article = document.createElement("article");
-    article.className = `gate-card${revealed ? " is-revealed" : ""}`;
+    article.className = `gate-card is-revealed${current ? " is-current" : ""}`;
 
     const number = document.createElement("span");
     number.className = "gate-number";
@@ -132,7 +134,7 @@ function renderGates(model, snapshot) {
 
     const state = document.createElement("span");
     state.className = "gate-state";
-    state.textContent = revealed ? gate.state : "pending";
+    state.textContent = gate.state;
 
     article.append(number, copy, state);
     return article;
@@ -141,17 +143,16 @@ function renderGates(model, snapshot) {
 }
 
 function renderRecovery(model, snapshot) {
-  const icons = ["▣", "⌁"];
-  const cards = model.recoveryChecks.map((check, index) => {
+  const cards = model.recoveryChecks.map((check) => {
     const revealIndex = eventIndex(model, check.revealAt);
-    const revealed = snapshot.cursor >= revealIndex;
+    const current = snapshot.cursor === revealIndex;
     const article = document.createElement("article");
-    article.className = `recovery-card${revealed ? " is-revealed" : ""}`;
+    article.className = `recovery-card is-revealed${current ? " is-current" : ""}`;
 
     const icon = document.createElement("span");
     icon.className = "recovery-icon";
     icon.setAttribute("aria-hidden", "true");
-    icon.textContent = icons[index] ?? "✓";
+    icon.textContent = check.id === "deployment" ? "K8s" : "PROM";
 
     const copy = document.createElement("div");
     copy.className = "recovery-copy";
@@ -163,7 +164,7 @@ function renderRecovery(model, snapshot) {
 
     const state = document.createElement("span");
     state.className = "recovery-state";
-    state.textContent = revealed ? check.state : "waiting";
+    state.textContent = check.state;
 
     article.append(icon, copy, state);
     return article;
@@ -173,20 +174,73 @@ function renderRecovery(model, snapshot) {
   const completion = byId("completion-lock");
   const completionIcon = completion.querySelector(".completion-icon");
   const completionText = completion.querySelector("strong");
-  if (snapshot.complete) {
-    completion.className = "completion-lock is-complete";
-    completionIcon.textContent = "✓";
-    completionText.textContent = "Recovered · completed state read back after restart";
-  } else {
-    completion.className = "completion-lock is-locked";
-    completionIcon.textContent = "◇";
-    completionText.textContent = "Waiting for both recovery signals";
+  completion.className = `completion-lock is-complete${snapshot.complete ? " is-current" : ""}`;
+  completionIcon.textContent = "✓";
+  setText("completion-label", snapshot.complete ? "REPLAY RESULT" : "VALIDATED RESULT");
+  completionText.textContent = "Recovered · completed state read back after restart";
+}
+
+function ensureTimeline(model, controller) {
+  const timeline = byId("timeline");
+  if (timeline.dataset.initialized === "true") {
+    return timeline;
+  }
+
+  const items = model.events.map((event, index) => {
+    const item = document.createElement("li");
+    item.className = "timeline-item";
+
+    const dot = document.createElement("span");
+    dot.className = "timeline-dot";
+    dot.setAttribute("aria-hidden", "true");
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "timeline-button";
+    button.dataset.index = String(index);
+    button.addEventListener("click", () => controller.select(index));
+
+    const phase = document.createElement("span");
+    phase.className = "timeline-phase";
+    phase.textContent = event.phase;
+    const title = document.createElement("span");
+    title.className = "timeline-title";
+    title.textContent = event.title;
+    const outcome = document.createElement("span");
+    outcome.className = "timeline-outcome";
+    outcome.textContent = event.outcome;
+
+    button.append(phase, title, outcome);
+    item.append(dot, button);
+    return item;
+  });
+  timeline.append(...items);
+  timeline.dataset.initialized = "true";
+  return timeline;
+}
+
+function scrollTimelineItem(timeline, item) {
+  if (timeline.scrollHeight <= timeline.clientHeight) {
+    return;
+  }
+  const itemTop = item.offsetTop;
+  const itemBottom = itemTop + item.offsetHeight;
+  const visibleTop = timeline.scrollTop;
+  const visibleBottom = visibleTop + timeline.clientHeight;
+  if (itemTop < visibleTop || itemBottom > visibleBottom) {
+    timeline.scrollTo({
+      top: itemTop < visibleTop ? itemTop : itemBottom - timeline.clientHeight,
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+    });
   }
 }
 
 function renderTimeline(model, controller, snapshot) {
-  const items = model.events.map((event, index) => {
-    const item = document.createElement("li");
+  const timeline = ensureTimeline(model, controller);
+  let currentItem;
+  Array.from(timeline.children).forEach((item, index) => {
     const complete = index <= snapshot.cursor;
     const current = index === snapshot.cursor;
     const selected = index === snapshot.selected;
@@ -198,32 +252,19 @@ function renderTimeline(model, controller, snapshot) {
     ]
       .filter(Boolean)
       .join(" ");
-
-    const dot = document.createElement("span");
-    dot.className = "timeline-dot";
-    dot.setAttribute("aria-hidden", "true");
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "timeline-button";
+    const button = item.querySelector(".timeline-button");
+    const outcome = item.querySelector(".timeline-outcome");
     button.setAttribute("aria-current", current ? "step" : "false");
-    button.addEventListener("click", () => controller.select(index));
-
-    const phase = document.createElement("span");
-    phase.className = "timeline-phase";
-    phase.textContent = event.phase;
-    const title = document.createElement("span");
-    title.className = "timeline-title";
-    title.textContent = event.title;
-    const outcome = document.createElement("span");
-    outcome.className = "timeline-outcome";
-    outcome.textContent = complete ? `✓ ${event.outcome}` : event.outcome;
-
-    button.append(phase, title, outcome);
-    item.append(dot, button);
-    return item;
+    outcome.textContent = complete
+      ? `✓ ${model.events[index].outcome}`
+      : model.events[index].outcome;
+    if (current) {
+      currentItem = item;
+    }
   });
-  byId("timeline").replaceChildren(...items);
+  if (snapshot.playing && currentItem) {
+    scrollTimelineItem(timeline, currentItem);
+  }
 }
 
 function renderDetail(model, snapshot) {
@@ -253,27 +294,29 @@ function renderReplayState(model, controller, snapshot) {
   renderRecovery(model, snapshot);
 
   const observed = snapshot.cursor + 1;
-  setText("step-count", `${observed} / ${model.events.length} observations`);
+  setText(
+    "step-count",
+    snapshot.cursor < 0
+      ? `Previewing observation 1 of ${model.events.length}`
+      : `${observed} / ${model.events.length} replayed`,
+  );
   byId("progress-bar").style.width = `${snapshot.progress * 100}%`;
 
   const playButton = byId("play-button");
-  playButton.lastChild.textContent = snapshot.playing ? " Pause replay" : " Play replay";
+  setText("play-button-label", snapshot.playing ? "Pause replay" : "Play replay");
   playButton.firstElementChild.textContent = snapshot.playing ? "Ⅱ" : "▶";
   byId("next-button").disabled = snapshot.complete;
+  byId("replay-next-link").hidden = !snapshot.complete;
 
   const incidentStatus = byId("incident-status");
+  incidentStatus.textContent = model.incident.status;
+  incidentStatus.className = "status-recovered";
   if (snapshot.complete) {
-    incidentStatus.textContent = model.incident.status;
-    incidentStatus.className = "status-recovered";
-    setText("replay-state", "Replay complete");
+    setText("replay-state", "Replay complete · next: recovery checks");
   } else if (snapshot.cursor >= 0) {
-    incidentStatus.textContent = "In replay";
-    incidentStatus.className = "status-active";
     setText("replay-state", model.events[snapshot.cursor].phase);
   } else {
-    incidentStatus.textContent = "Ready";
-    incidentStatus.className = "status-neutral";
-    setText("replay-state", "Ready to replay");
+    setText("replay-state", "Validated result loaded · replay ready");
   }
 
   if (snapshot.cursor >= 0) {
@@ -281,6 +324,8 @@ function renderReplayState(model, controller, snapshot) {
       "live-announcement",
       `Replay step ${snapshot.cursor + 1}: ${model.events[snapshot.cursor].title}`,
     );
+  } else {
+    setText("live-announcement", "");
   }
 }
 
@@ -298,18 +343,31 @@ async function initialise() {
     onChange: (snapshot) => renderReplayState(model, controller, snapshot),
   });
 
-  const togglePlay = () => {
-    if (controller.snapshot().playing) {
-      controller.pause();
+  const startReplay = () => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      controller.finish();
     } else {
       controller.play();
     }
   };
 
+  const togglePlay = () => {
+    if (controller.snapshot().playing) {
+      controller.pause();
+    } else {
+      startReplay();
+    }
+  };
+
   byId("play-button").addEventListener("click", togglePlay);
   byId("hero-play").addEventListener("click", () => {
-    byId("replay").scrollIntoView({ behavior: "smooth", block: "start" });
-    controller.play();
+    byId("replay").scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "auto"
+        : "smooth",
+      block: "start",
+    });
+    startReplay();
   });
   byId("next-button").addEventListener("click", () => controller.next());
   byId("reset-button").addEventListener("click", () => controller.reset());
@@ -325,6 +383,6 @@ initialise().catch((error) => {
   setText("replay-state", "Replay unavailable");
   setText("detail-title", "Proof projection could not be loaded");
   setText("detail-summary", error.message);
-  setText("detail-json", "{}" );
+  setText("detail-json", "{}");
   console.error(error);
 });

@@ -25,7 +25,6 @@
     "container:proof": "bash scripts/run-container-image-proof.sh",
     "release:source-proof": "bash scripts/run-source-ref-proof.sh",
     "demo": "node demo/server.mjs",
-    "demo:replay": "node demo/server.mjs",
     "demo:fast": "bash scripts/run-final-fast-demo.sh",
     "proof:full": "bash scripts/run-final-demo.sh",
     "plugin:inspect": "openclaw plugins inspect dataops-guardian --runtime --json",
