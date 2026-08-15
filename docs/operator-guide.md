@@ -137,7 +137,7 @@ administrator separately supplies a cluster identity, scoped kubeconfig, and
 exact namespace/Deployment allowlist. Do not add that configuration to a
 general-purpose profile merely to try the project.
 
-For the complete integration proof, use `npm run demo`: it creates its own
+For the complete integration proof, use `npm run proof:full`: it creates its own
 disposable kind cluster, exact allowlist, short-lived scoped credential, and
 loopback bridge, then removes them. The component contracts document the
 [bridge configuration](alertmanager-http-bridge.md) and
@@ -209,7 +209,7 @@ npm run check
 npm run demo:fast
 ```
 
-The aggregate demos require a clean committed worktree and bind their sanitized
+The aggregate proof runners require a clean committed worktree and bind their sanitized
 reports to its full Git SHA. Use component proof commands while iterating on
 uncommitted changes.
 
@@ -242,7 +242,7 @@ To run the full release proof on Linux/WSL with a reachable Docker daemon,
 `kind`, and `kubectl`:
 
 ```bash
-npm run demo
+npm run proof:full
 ```
 
 While running, it emits phase names only and applies component deadlines when

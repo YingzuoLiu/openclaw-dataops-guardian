@@ -395,14 +395,14 @@ jobs:
             docker version --format 'docker-server={{.Server.Version}}'
           } >"$report_dir/versions.txt"
 
-      - name: Run full final demo
+      - name: Run full final proof
         shell: bash
         run: |
           set -Eeuo pipefail
           report_dir="$RUNNER_TEMP/guardian-final-proof"
 
           set +e
-          npm run --silent demo \
+          npm run --silent proof:full \
             >"$report_dir/final-proof.json"
           demo_status=$?
           set -e

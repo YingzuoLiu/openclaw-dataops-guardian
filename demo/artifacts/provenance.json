@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "classification": "sanitized_ci_kind_proof",
+  "artifactName": "guardian-final-proof-31552595287-1",
+  "artifactArchiveSha256": "07972fc348a1bcd426a0f8d06cfe656c480e8680b5420a895dd48ae4e74bcbeb",
+  "validatedReportSha256": "41b1b560c2197ecaee9ab3e707ee9981608cc871a39b19fd32eca7482b432d88",
+  "workflowRunNumber": 50,
+  "workflowRunId": "31552595287",
+  "workflowUrl": "https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/runs/31552595287",
+  "sourceCommit": "f480dcf99ee9dedcaa61ecf9e21332c8260377db",
+  "artifactCreatedAt": "2026-08-12T01:17:40Z",
+  "captureNote": "Exact validated-final-proof.json extracted from the successful GitHub Actions artifact without content changes."
+}

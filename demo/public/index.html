@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="A fast, offline replay of OpenClaw DataOps Guardian's sanitized full-safety proof."
+    />
+    <title>Guardian · Proof Replay</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#replay">Skip to replay</a>
+    <div class="ambient ambient-one" aria-hidden="true"></div>
+    <div class="ambient ambient-two" aria-hidden="true"></div>
+
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Guardian proof replay home">
+        <span class="brand-mark" aria-hidden="true">G</span>
+        <span>
+          <strong>DataOps Guardian</strong>
+          <small>Proof Replay</small>
+        </span>
+      </a>
+      <div class="topbar-meta">
+        <span class="offline-dot" aria-hidden="true"></span>
+        Local only
+        <span class="topbar-divider" aria-hidden="true"></span>
+        <a id="header-docs-link" href="#provenance">Proof sources</a>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="page-title">
+        <div class="hero-copy">
+          <p class="mode-badge">
+            <span aria-hidden="true">●</span>
+            Demo mode — sanitized proof replay
+          </p>
+          <h1 id="page-title">
+            One alert. One authorized rollback.
+            <span>No shortcuts to “recovered.”</span>
+          </h1>
+          <p id="value-statement" class="hero-lede">
+            Guardian turns an operational alert into an evidence-backed,
+            human-approved, replay-safe rollback—and requires infrastructure and
+            application recovery to agree.
+          </p>
+          <div class="hero-actions">
+            <button class="button button-primary" id="hero-play" type="button">
+              <span class="play-icon" aria-hidden="true">▶</span>
+              Play proof replay
+            </button>
+            <a class="button button-secondary" href="#audit">Inspect proof JSON</a>
+          </div>
+          <p id="replay-notice" class="truth-note">
+            Fast visual replay only. No live Kubernetes operation is performed.
+          </p>
+        </div>
+
+        <aside class="proof-card" aria-label="Proof provenance summary">
+          <div class="proof-card-head">
+            <span>Source integrity</span>
+            <strong>CI VALIDATED</strong>
+          </div>
+          <div class="commit-row">
+            <span class="commit-icon" aria-hidden="true">⌁</span>
+            <div>
+              <small>Source commit</small>
+              <a id="commit-link" href="#provenance">loading…</a>
+            </div>
+            <span class="verified-mark" aria-label="verified">✓</span>
+          </div>
+          <dl class="proof-facts">
+            <div>
+              <dt>Runtime</dt>
+              <dd>Disposable kind</dd>
+            </div>
+            <div>
+              <dt>Evidence</dt>
+              <dd>Real Prometheus</dd>
+            </div>
+            <div>
+              <dt>Approval</dt>
+              <dd>Real Lobster</dd>
+            </div>
+            <div>
+              <dt>Console access</dt>
+              <dd>Read-only replay</dd>
+            </div>
+          </dl>
+          <div class="proof-card-foot">
+            <span class="lock-icon" aria-hidden="true">◇</span>
+            No cluster credentials · no external requests
+          </div>
+        </aside>
+      </section>
+
+      <section class="incident-card" aria-labelledby="incident-title">
+        <div class="incident-heading">
+          <div class="incident-symbol" aria-hidden="true">!</div>
+          <div>
+            <p class="eyebrow">INCIDENT</p>
+            <h2 id="incident-title">Sanitized proof occurrence</h2>
+            <p id="incident-identifier">Identifier withheld by artifact contract</p>
+          </div>
+        </div>
+        <div class="incident-stat">
+          <span>Replay state</span>
+          <strong id="incident-status" class="status-neutral">Ready</strong>
+        </div>
+        <div class="incident-stat">
+          <span>Deduplication</span>
+          <strong id="dedup-result">created → duplicate</strong>
+        </div>
+        <div class="incident-stat">
+          <span>Mutation dispatches</span>
+          <strong id="mutation-count">1</strong>
+        </div>
+        <div class="incident-stat incident-stat-wide">
+          <span>Completion rule</span>
+          <strong id="completion-rule">Deployment + fresh metric</strong>
+        </div>
+      </section>
+
+      <section class="gate-section" aria-labelledby="gate-title">
+        <div class="section-kicker">
+          <p class="eyebrow">NON-BYPASSABLE CONTROLS</p>
+          <h2 id="gate-title">Three gates before mutation</h2>
+        </div>
+        <div id="gate-grid" class="gate-grid" aria-live="polite"></div>
+      </section>
+
+      <section id="replay" class="replay-section" aria-labelledby="replay-title">
+        <div class="replay-header">
+          <div>
+            <p class="eyebrow">PROOF PATH</p>
+            <h2 id="replay-title">From firing alert to durable recovery</h2>
+          </div>
+          <div class="replay-controls" aria-label="Replay controls">
+            <button class="icon-button" id="reset-button" type="button">
+              ↺ <span>Reset demo</span>
+            </button>
+            <button class="icon-button" id="next-button" type="button">
+              Step <span aria-hidden="true">→</span>
+            </button>
+            <button class="button button-primary compact" id="play-button" type="button">
+              <span aria-hidden="true">▶</span>
+              Play replay
+            </button>
+          </div>
+        </div>
+
+        <div class="progress-track" aria-hidden="true">
+          <span id="progress-bar"></span>
+        </div>
+        <div class="replay-meta">
+          <span id="step-count">0 / 10 observations</span>
+          <span id="replay-state">Ready to replay</span>
+        </div>
+
+        <div class="replay-layout">
+          <ol id="timeline" class="timeline" aria-label="Proof replay timeline"></ol>
+
+          <aside class="event-detail" aria-labelledby="detail-title">
+            <div class="detail-head">
+              <div>
+                <p id="detail-phase" class="eyebrow">SELECT AN OBSERVATION</p>
+                <h3 id="detail-title">Alertmanager firing accepted</h3>
+              </div>
+              <span id="detail-outcome" class="outcome-chip">created</span>
+            </div>
+            <p id="detail-summary" class="detail-summary"></p>
+
+            <div class="evidence-class">
+              <span>Evidence class</span>
+              <strong id="detail-evidence-class">Direct artifact field</strong>
+            </div>
+
+            <div class="json-panel">
+              <div class="json-panel-head">
+                <span>Sanitized source JSON</span>
+                <button id="copy-event-json" type="button">Copy</button>
+              </div>
+              <pre><code id="detail-json">Loading proof projection…</code></pre>
+            </div>
+
+            <details class="source-pointers">
+              <summary>Artifact field pointers</summary>
+              <ul id="detail-pointers"></ul>
+            </details>
+          </aside>
+        </div>
+        <p id="live-announcement" class="sr-only" aria-live="polite"></p>
+      </section>
+
+      <section class="recovery-section" aria-labelledby="recovery-title">
+        <div class="section-kicker">
+          <p class="eyebrow">DUAL RECOVERY VERIFICATION</p>
+          <h2 id="recovery-title">Healthy infrastructure is necessary—not sufficient</h2>
+          <p>
+            Completion is released only after both checks pass. An Alertmanager
+            resolved event alone is explicitly not recovery proof.
+          </p>
+        </div>
+        <div id="recovery-grid" class="recovery-grid"></div>
+        <div id="completion-lock" class="completion-lock is-locked">
+          <span class="completion-icon" aria-hidden="true">◇</span>
+          <div>
+            <small>FINAL STATE</small>
+            <strong>Waiting for both recovery signals</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="fail-closed-section" aria-labelledby="fail-closed-title">
+        <div class="section-kicker fail-closed-heading">
+          <div>
+            <p class="eyebrow">LIVE NEGATIVE PROOFS</p>
+            <h2 id="fail-closed-title">When a gate fails, Guardian stops</h2>
+          </div>
+          <span class="zero-mutation">0 unauthorized mutations</span>
+        </div>
+        <div id="fail-closed-grid" class="fail-closed-grid"></div>
+      </section>
+
+      <section id="audit" class="audit-section" aria-labelledby="audit-title">
+        <div class="section-kicker">
+          <p class="eyebrow">TRACEABILITY</p>
+          <h2 id="audit-title">Audit / proof JSON</h2>
+          <p id="audit-description">
+            The checked-in display source is the sanitized CI acceptance report.
+          </p>
+        </div>
+        <details class="audit-details">
+          <summary>
+            <span>
+              <strong id="audit-summary-title">Validated sanitized proof JSON</strong>
+              <small id="audit-summary-meta">Loading source metadata…</small>
+            </span>
+            <span class="expand-hint">Expand JSON</span>
+          </summary>
+          <div class="audit-body">
+            <div class="json-panel-head">
+              <span>Exact checked-in artifact</span>
+              <button id="copy-audit-json" type="button">Copy JSON</button>
+            </div>
+            <pre><code id="audit-json">Loading…</code></pre>
+          </div>
+        </details>
+      </section>
+
+      <section id="provenance" class="provenance-section" aria-labelledby="provenance-title">
+        <div>
+          <p class="eyebrow">WHAT YOU ARE LOOKING AT</p>
+          <h2 id="provenance-title">Replay, fixture, or live proof?</h2>
+        </div>
+        <div class="classification-grid">
+          <article class="classification-card active">
+            <span>THIS CONSOLE</span>
+            <h3>Sanitized CI proof replay</h3>
+            <p>
+              A presentation projection from a successful, checked-in GitHub
+              Actions artifact. No conclusions are recomputed here.
+            </p>
+          </article>
+          <article class="classification-card">
+            <span>NOT USED FOR THE MAIN PATH</span>
+            <h3>Deterministic test fixture</h3>
+            <p>
+              Unit fixtures remain in the repository, but this page does not
+              present them as real kind observations.
+            </p>
+          </article>
+          <article class="classification-card">
+            <span>RUN SEPARATELY</span>
+            <h3>Live disposable proof</h3>
+            <p>
+              <code>npm run proof:full</code> creates the disposable cluster and
+              regenerates the acceptance report; it is not run in interviews.
+            </p>
+          </article>
+        </div>
+        <div class="source-links">
+          <a id="workflow-link" href="#" target="_blank" rel="noreferrer">
+            GitHub Actions run <span aria-hidden="true">↗</span>
+          </a>
+          <a id="docs-link" href="#" target="_blank" rel="noreferrer">
+            Full proof contract <span aria-hidden="true">↗</span>
+          </a>
+          <a id="source-link" href="#" target="_blank" rel="noreferrer">
+            Source commit <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <span>OpenClaw DataOps Guardian</span>
+      <span>Safety-focused reference prototype · read-only replay console</span>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

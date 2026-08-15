@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "proof": "dataops-guardian-final-demo",
+  "source": {
+    "commit": "f480dcf99ee9dedcaa61ecf9e21332c8260377db"
+  },
+  "fast": {
+    "policyRegistration": true,
+    "liveAgentFinalizeGate": true,
+    "httpBridgeAuthCheckpointCrashRecovery": true,
+    "syntheticApproval": true,
+    "syntheticDenial": true
+  },
+  "live": {
+    "environment": {
+      "kindCluster": true,
+      "realPrometheus": true,
+      "realLobster": true,
+      "pinnedImages": true
+    },
+    "ingress": {
+      "unauthorizedStatus": 401,
+      "unauthorizedStateCreated": false,
+      "firingDisposition": "created",
+      "replayDisposition": "duplicate",
+      "webhookMetricEvidenceCount": 0,
+      "evidenceThroughGatewayTools": true
+    },
+    "approval": {
+      "approvedWorkflowStatus": "ok",
+      "deniedWorkflowStatus": "cancelled",
+      "deniedIncidentStage": "blocked",
+      "deniedBlockedBy": "approval_gate",
+      "deniedMutationDispatchCount": 0
+    },
+    "restartReconciliation": {
+      "ambiguousOutcome": "unknown",
+      "ambiguousManualReviewBlocked": true,
+      "ambiguousMutationDispatchCount": 0,
+      "appliedOutcome": "confirmed_succeeded"
+    },
+    "authorization": {
+      "offTargetBlocked": true,
+      "offTargetBlockedBy": "allowlist_gate",
+      "rbacOtherDeploymentDenied": true,
+      "rbacOtherNamespaceDenied": true,
+      "rbacSecretsDenied": true,
+      "rbacDeleteDenied": true,
+      "rbacCreateDenied": true
+    },
+    "mutation": {
+      "rollbackDecision": "rolled_back",
+      "dispatchCount": 1,
+      "generationChanged": true,
+      "resourceVersionChanged": true,
+      "templateMatchesTarget": true,
+      "immediateReplayDecision": "duplicate",
+      "postRestartReplayDecision": "duplicate",
+      "replayGenerationUnchanged": true,
+      "replayMutationFingerprintUnchanged": true
+    },
+    "recovery": {
+      "resolvedWebhookIsNotRecovery": true,
+      "scaleToZeroDecision": "not_recovered",
+      "scaleToZeroDeploymentHealthy": false,
+      "scaleToZeroIncidentCompleted": false,
+      "finalDecision": "recovered",
+      "deploymentHealthy": true,
+      "prometheusHealthy": true,
+      "recoveredMetricValue": 1,
+      "threshold": 0.95,
+      "incidentCompleted": true,
+      "completionReadbackConfirmed": true
+    },
+    "replayProtection": {
+      "rollbackReplayIsDuplicate": true,
+      "recoveryReplayBlocked": true,
+      "recoveryReplayBlockedBy": "completed_stage_gate",
+      "recoveryReplayBlockedAfterRestart": true,
+      "completedStateSurvivedRestart": true
+    },
+    "cleanup": {
+      "gatewayStopped": true,
+      "bridgeStopped": true,
+      "portForwardStopped": true,
+      "clusterDeleted": true,
+      "localImageTagsDeleted": true,
+      "temporaryCredentialsDeleted": true
+    }
+  },
+  "apiCostUsd": 0
+}

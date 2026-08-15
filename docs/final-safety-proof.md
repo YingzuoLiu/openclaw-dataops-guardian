@@ -2,7 +2,7 @@
 
 Status: **release-gated by exact-head Linux CI**. Introduced for `v0.2.0`, this
 remains the end-to-end safety acceptance contract for `v0.3.0`. CI runs `npm
-run demo` and requires an allowlisted `ok: true` report, exact source-commit
+run proof:full` and requires an allowlisted `ok: true` report, exact source-commit
 binding, and cleanup before the job can pass. It composes the component proofs
 from Steps 1-4 and adds bounded live failure and authority cases without
 expanding Guardian into a production orchestrator.
@@ -16,7 +16,7 @@ npm ci
 npm run check
 ```
 
-Both aggregate demos require a clean committed worktree. Their released reports
+Both aggregate proof runners require a clean committed worktree. Their released reports
 carry the full source Git SHA, and the full report requires its fast and live
 parts to agree on that SHA.
 
@@ -61,10 +61,10 @@ Run the full proof on Linux/WSL with a reachable Docker daemon, `kind`,
 Prometheus images:
 
 ```bash
-npm run demo
+npm run proof:full
 ```
 
-The full command runs `demo:fast`, creates one uniquely named disposable kind
+The full proof command runs `demo:fast`, creates one uniquely named disposable kind
 cluster, and releases its machine-readable JSON proof only after the live
 matrix and cleanup assertions pass. It uses no paid API or external model. Both
 runners emit phase-only progress, bound component runtime when the standard
@@ -131,7 +131,7 @@ justify another live cluster fault.
 
 ## Report contract
 
-On success, both demos keep component stdout and raw logs inside proof-owned
+On success, both proof runners keep component stdout and raw logs inside proof-owned
 temporary directories. If a component fails, the runner copies only its last
 120 local log lines to stderr before deleting the directory, and emits no
 success report. `scripts/final-proof-report.mjs` constructs the released JSON
