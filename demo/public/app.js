@@ -328,4 +328,3 @@ initialise().catch((error) => {
   setText("detail-json", "{}" );
   console.error(error);
 });
-

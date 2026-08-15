@@ -64,4 +64,3 @@ npm run proof:full
 
 That command retains the original Step 5 prerequisites and safety contract. It
 is deliberately separate from the interview Console.
-

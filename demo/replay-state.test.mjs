@@ -68,4 +68,3 @@ describe("ReplayState", () => {
     expect(state.snapshot()).toMatchObject({ cursor: -1, playing: false });
   });
 });
-

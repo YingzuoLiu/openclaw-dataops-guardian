@@ -463,4 +463,3 @@ export async function loadDemoProjection({
 
   return buildDemoProjection(report, provenance);
 }
-
