@@ -68,27 +68,41 @@ Prerequisites:
 git clone https://github.com/YingzuoLiu/openclaw-dataops-guardian.git
 cd openclaw-dataops-guardian
 npm ci
-npm run check
+npm run demo
 ```
 
-The standard check runs entirely locally and does not contact a Kubernetes
-cluster or Prometheus server.
+`npm run demo` starts the interview-oriented **Proof Replay Console** on
+loopback and normally opens it in the browser. It is an offline, read-only
+projection of a checked-in, hash-bound sanitized artifact from successful
+[CI run #50](https://github.com/YingzuoLiu/openclaw-dataops-guardian/actions/runs/31552595287)
+against disposable kind, real Prometheus, and real Lobster. It does not start a
+cluster, hold credentials, call an external service, or recompute any safety
+decision. See [`demo/README.md`](demo/README.md) for provenance and the exact
+replay boundary.
+
+The deterministic build and unit suite also run locally without contacting a
+Kubernetes cluster or Prometheus server:
+
+```bash
+npm run check
+```
 
 Choose the proof that matches what you want to inspect:
 
 | Goal | Command | Additional requirements |
 |---|---|---|
+| Replay the sanitized full-safety proof in the interview Console | `npm run demo` | None; loopback-only and offline at runtime |
 | Build and run the deterministic test suite | `npm run check` | None |
 | Exercise policy, live Agent hooks, HTTP ingestion, crash recovery, and approve/deny paths | `npm run demo:fast` | Linux/WSL Bash; no Docker, cluster, paid API, or external model |
 | Build the immutable Guardian/OpenClaw image from the exact clean commit | `npm run container:build` | Linux/WSL Bash and Docker with image-pull access |
 | Prove both image roles and the baked plugin inventory | `npm run container:proof` | Linux/WSL Bash and Docker with image-pull access |
-| Reproduce the complete rollback and recovery safety matrix | `npm run demo` | Linux/WSL Bash, Docker, `kind`, `kubectl`, and image-pull network access |
+| Reproduce the complete rollback and recovery safety matrix | `npm run proof:full` | Linux/WSL Bash, Docker, `kind`, `kubectl`, and image-pull network access |
 
-The full demo creates exactly one disposable kind cluster from digest-pinned
+The full proof creates exactly one disposable kind cluster from digest-pinned
 images, uses a scoped ServiceAccount, and cleans up the cluster and temporary
 credentials before releasing a sanitized `ok: true` report. Both aggregate
-demos require a clean committed worktree and bind their reports to its full Git
-SHA.
+proof runners require a clean committed worktree and bind their reports to its
+full Git SHA.
 
 <details>
 <summary>Running from a Windows-mounted WSL path</summary>
@@ -126,7 +140,7 @@ the full positive/negative remediation matrix and report contract, see the
 
 ## Verified results
 
-- **Final safety proof (Step 5):** `npm run demo` combines the no-cost fast
+- **Final safety proof (Step 5):** `npm run proof:full` combines the no-cost fast
   suite with one isolated kind cluster. Its allowlisted JSON report is emitted
   only after every positive and negative assertion passes and the cluster,
   Gateway, bridge, port-forward, kubeconfigs, and temporary credentials have
@@ -162,7 +176,7 @@ the full positive/negative remediation matrix and report contract, see the
 
   Full contract and reproduction steps: [Step 4 recovery contract](docs/deployment-prometheus-recovery.md).
 - **Automated acceptance:** the TypeScript build and Vitest suite run on Node.js
-  22.22.2 and Node.js 24.15.0. After they pass, CI runs the complete demo and a
+  22.22.2 and Node.js 24.15.0. After they pass, CI runs the complete proof and a
   separate Linux/amd64 OCI contract job. Both reports must be sanitized and
   bound to the exact checked-out commit; a tag-triggered job additionally
   proves a fresh remote source checkout.
@@ -179,8 +193,9 @@ the full positive/negative remediation matrix and report contract, see the
 
 | Command | What it demonstrates |
 |---|---|
+| `npm run demo` | Offline interview Console replaying the checked-in, sanitized CI/kind proof artifact |
 | `npm run demo:fast` | No-cost policy, live Agent hook, HTTP bridge/crash recovery, and synthetic approve/deny summary |
-| `npm run demo` | Complete Step 5 live safety matrix in one disposable kind cluster |
+| `npm run proof:full` | Complete Step 5 live safety matrix in one disposable kind cluster |
 | `npm run container:build` | Build the dual-role image from an exact clean Git commit, never the live ignored `dist/` tree |
 | `npm run container:proof` | Inspect and run the real Gateway/Bridge image roles, plugin inventory, failure cases, and layer sentinel check |
 | `npm run release:source-proof -- v0.3.0` | Fresh-clone a real remote tag; verify install, build, five Tools/Hooks, and approval resume across a Gateway restart |

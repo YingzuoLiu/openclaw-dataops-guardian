@@ -31,19 +31,32 @@ function between(text, start, end) {
   return text.slice(startIndex, endIndex);
 }
 
-describe("final demo source contract", () => {
-  it("exposes one fast command and one full command with no paid or cluster work in fast mode", async () => {
-    const [packageText, fast, full] = await Promise.all([
+describe("final proof source contract", () => {
+  it("keeps the replay console separate from fast and full proof commands", async () => {
+    const [packageText, workflow, fast, full, contributing] = await Promise.all([
       source("package.json"),
+      source(".github/workflows/ci.yml"),
       source("scripts/run-final-fast-demo.sh"),
       source("scripts/run-final-demo.sh"),
+      source("CONTRIBUTING.md"),
     ]);
     const packageJson = JSON.parse(packageText);
 
+    expect(packageJson.scripts.demo).toBe("node demo/server.mjs");
+    expect(packageJson.scripts).not.toHaveProperty("demo:replay");
     expect(packageJson.scripts["demo:fast"]).toBe(
       "bash scripts/run-final-fast-demo.sh",
     );
-    expect(packageJson.scripts.demo).toBe("bash scripts/run-final-demo.sh");
+    expect(packageJson.scripts["proof:full"]).toBe(
+      "bash scripts/run-final-demo.sh",
+    );
+    expect(workflow).toContain("npm run --silent proof:full");
+    expect(workflow).not.toContain("npm run --silent demo \\");
+    expect(contributing).toContain("```bash\nnpm run proof:full\n```");
+    expect(contributing).not.toContain("```bash\nnpm run demo\n```");
+    expect(contributing).toContain(
+      "offline `npm run demo` Console replays a checked-in sanitized artifact",
+    );
 
     expectInOrder(fast, [
       "run-policy-registration-proof.sh",
